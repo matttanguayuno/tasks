@@ -1,0 +1,114 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Project {
+  id          String        @id @default(cuid())
+  name        String
+  description String        @default("")
+  color       String        @default("#6366f1")
+  icon        String        @default("folder")
+  order       Int           @default(0)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  sections    Section[]
+  links       ProjectLink[]
+}
+
+model ProjectLink {
+  id        String   @id @default(cuid())
+  name      String
+  url       String
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+}
+
+model Section {
+  id        String   @id @default(cuid())
+  name      String
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  tasks     Task[]
+
+  @@index([projectId])
+}
+
+model Task {
+  id          String       @id @default(cuid())
+  title       String
+  description String       @default("")
+  dueDate     DateTime?
+  priority    String?      // LOW, MEDIUM, HIGH
+  requestedBy String?
+  order       Int          @default(0)
+  completed   Boolean      @default(false)
+  completedAt DateTime?
+  inProgress  Boolean      @default(false)
+  hyperlink   String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  sectionId   String
+  section     Section      @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  parentId    String?
+  parent      Task?        @relation("TaskSubtasks", fields: [parentId], references: [id], onDelete: Cascade)
+  subtasks    Task[]       @relation("TaskSubtasks")
+  tags        TaskTag[]
+  comments    Comment[]
+  attachments Attachment[]
+
+  @@index([sectionId])
+  @@index([parentId])
+}
+
+model Tag {
+  id    String    @id @default(cuid())
+  name  String    @unique
+  color String    @default("#6366f1")
+  tasks TaskTag[]
+}
+
+model TaskTag {
+  taskId String
+  tagId  String
+  task   Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  tag    Tag    @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([taskId, tagId])
+  @@index([tagId])
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  content   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+}
+
+model Attachment {
+  id        String   @id @default(cuid())
+  filename  String
+  url       String
+  size      Int
+  mimeType  String
+  createdAt DateTime @default(now())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+}

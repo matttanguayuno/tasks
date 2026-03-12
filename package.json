@@ -1,5 +1,5 @@
 {
-  "name": "asanalite-temp",
+  "name": "asanalite",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -9,12 +9,21 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
+    "@prisma/adapter-better-sqlite3": "^7.4.2",
+    "@prisma/client": "^7.4.2",
+    "better-sqlite3": "^12.6.2",
+    "dotenv": "^17.3.1",
     "next": "16.1.6",
+    "prisma": "^7.4.2",
     "react": "19.2.3",
     "react-dom": "19.2.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
