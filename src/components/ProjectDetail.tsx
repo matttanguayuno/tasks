@@ -1,9 +1,129 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { RichDescriptionEditor } from "./TaskDetail";
 import { api } from "@/lib/api";
 import type { ProjectWithSections, ProjectLink } from "@/lib/types";
+
+interface SortableLinkRowProps {
+  link: ProjectLink;
+  isEditing: boolean;
+  editLinkName: string;
+  editLinkUrl: string;
+  editNameRef: React.RefObject<HTMLInputElement | null>;
+  onEditNameChange: (v: string) => void;
+  onEditUrlChange: (v: string) => void;
+  onCommitEdit: () => void;
+  onCancelEdit: () => void;
+  onStartEdit: () => void;
+  onDelete: () => void;
+}
+
+function SortableLinkRow({
+  link,
+  isEditing,
+  editLinkName,
+  editLinkUrl,
+  editNameRef,
+  onEditNameChange,
+  onEditUrlChange,
+  onCommitEdit,
+  onCancelEdit,
+  onStartEdit,
+  onDelete,
+}: SortableLinkRowProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: link.id });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} className="group">
+      {isEditing ? (
+        <div className="flex items-center gap-2 px-2 py-1.5 bg-indigo-50 rounded text-sm">
+          <input
+            ref={editNameRef}
+            type="text"
+            value={editLinkName}
+            onChange={(e) => onEditNameChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") onCommitEdit();
+              if (e.key === "Escape") onCancelEdit();
+            }}
+            placeholder="Name"
+            className="flex-1 min-w-0 px-2 py-0.5 text-sm border border-indigo-300 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          />
+          <input
+            type="url"
+            value={editLinkUrl}
+            onChange={(e) => onEditUrlChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") onCommitEdit();
+              if (e.key === "Escape") onCancelEdit();
+            }}
+            placeholder="https://..."
+            className="flex-1 min-w-0 px-2 py-0.5 text-sm border border-indigo-300 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          />
+          <button
+            onClick={onCommitEdit}
+            className="px-2 py-0.5 text-xs text-white bg-indigo-600 rounded hover:bg-indigo-700"
+          >
+            Save
+          </button>
+          <button
+            onClick={onCancelEdit}
+            className="px-2 py-0.5 text-xs text-gray-600 bg-gray-100 rounded hover:bg-gray-200"
+          >
+            Cancel
+          </button>
+        </div>
+      ) : (
+        <div
+          {...attributes}
+          {...listeners}
+          className="flex items-center gap-2 px-2 py-1.5 bg-gray-50 rounded text-sm hover:bg-gray-100 transition-colors cursor-grab active:cursor-grabbing touch-none"
+        >
+          <a
+            href={link.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onPointerDown={(e) => e.stopPropagation()}
+            className="flex-1 min-w-0 text-indigo-600 hover:underline truncate cursor-pointer"
+            title={link.url}
+          >
+            {link.name}
+          </a>
+          <span className="text-xs text-gray-400 truncate max-w-[150px] hidden sm:block">
+            {link.url.replace(/^https?:\/\//, "").split("/")[0]}
+          </span>
+          <button
+            onClick={onStartEdit}
+            className="p-0.5 opacity-0 group-hover:opacity-100 hover:text-indigo-600 text-gray-400 transition-opacity"
+            title="Edit link"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+            </svg>
+          </button>
+          <button
+            onClick={onDelete}
+            className="p-0.5 opacity-0 group-hover:opacity-100 hover:text-red-500 text-gray-400 transition-opacity"
+            title="Delete link"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 interface ProjectDetailProps {
   project: ProjectWithSections;
@@ -114,6 +234,26 @@ export function ProjectDetail({ project, onRefresh }: ProjectDetailProps) {
     setEditingLinkId(null);
   };
 
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor)
+  );
+
+  const handleLinkDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id || !project.links) return;
+    const oldIndex = project.links.findIndex((l) => l.id === active.id);
+    const newIndex = project.links.findIndex((l) => l.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+    const reordered = arrayMove(project.links, oldIndex, newIndex);
+    // Optimistic update via onRefresh after API call
+    await api.reorder(
+      reordered.map((l, i) => ({ id: l.id, order: i })),
+      "projectLink"
+    );
+    onRefresh();
+  };
+
   return (
     <div
       ref={panelRef}
@@ -155,87 +295,32 @@ export function ProjectDetail({ project, onRefresh }: ProjectDetailProps) {
           </label>
 
           {project.links && project.links.length > 0 && (
-            <div className="space-y-1 mb-2">
-              {project.links.map((link) => (
-                <div key={link.id} className="group">
-                  {editingLinkId === link.id ? (
-                    <div className="flex items-center gap-2 px-2 py-1.5 bg-indigo-50 rounded text-sm">
-                      <input
-                        ref={editNameRef}
-                        type="text"
-                        value={editLinkName}
-                        onChange={(e) => setEditLinkName(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") commitEditLink();
-                          if (e.key === "Escape") setEditingLinkId(null);
-                        }}
-                        placeholder="Name"
-                        className="flex-1 min-w-0 px-2 py-0.5 text-sm border border-indigo-300 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                      />
-                      <input
-                        type="url"
-                        value={editLinkUrl}
-                        onChange={(e) => setEditLinkUrl(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") commitEditLink();
-                          if (e.key === "Escape") setEditingLinkId(null);
-                        }}
-                        placeholder="https://..."
-                        className="flex-1 min-w-0 px-2 py-0.5 text-sm border border-indigo-300 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                      />
-                      <button
-                        onClick={commitEditLink}
-                        className="px-2 py-0.5 text-xs text-white bg-indigo-600 rounded hover:bg-indigo-700"
-                      >
-                        Save
-                      </button>
-                      <button
-                        onClick={() => setEditingLinkId(null)}
-                        className="px-2 py-0.5 text-xs text-gray-600 bg-gray-100 rounded hover:bg-gray-200"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-2 px-2 py-1.5 bg-gray-50 rounded text-sm hover:bg-gray-100 transition-colors">
-                      <svg className="w-4 h-4 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-                      </svg>
-                      <a
-                        href={link.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex-1 min-w-0 text-indigo-600 hover:underline truncate"
-                        title={link.url}
-                      >
-                        {link.name}
-                      </a>
-                      <span className="text-xs text-gray-400 truncate max-w-[150px] hidden sm:block">
-                        {link.url.replace(/^https?:\/\//, "").split("/")[0]}
-                      </span>
-                      <button
-                        onClick={() => startEditLink(link)}
-                        className="p-0.5 opacity-0 group-hover:opacity-100 hover:text-indigo-600 text-gray-400 transition-opacity"
-                        title="Edit link"
-                      >
-                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                        </svg>
-                      </button>
-                      <button
-                        onClick={() => handleDeleteLink(link.id)}
-                        className="p-0.5 opacity-0 group-hover:opacity-100 hover:text-red-500 text-gray-400 transition-opacity"
-                        title="Delete link"
-                      >
-                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                      </button>
-                    </div>
-                  )}
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleLinkDragEnd}
+            >
+              <SortableContext items={project.links.map((l) => l.id)} strategy={verticalListSortingStrategy}>
+                <div className="space-y-1 mb-2">
+                  {project.links.map((link) => (
+                    <SortableLinkRow
+                      key={link.id}
+                      link={link}
+                      isEditing={editingLinkId === link.id}
+                      editLinkName={editLinkName}
+                      editLinkUrl={editLinkUrl}
+                      editNameRef={editNameRef}
+                      onEditNameChange={setEditLinkName}
+                      onEditUrlChange={setEditLinkUrl}
+                      onCommitEdit={commitEditLink}
+                      onCancelEdit={() => setEditingLinkId(null)}
+                      onStartEdit={() => startEditLink(link)}
+                      onDelete={() => handleDeleteLink(link.id)}
+                    />
+                  ))}
                 </div>
-              ))}
-            </div>
+              </SortableContext>
+            </DndContext>
           )}
 
           {/* Add link form */}

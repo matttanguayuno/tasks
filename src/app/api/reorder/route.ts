@@ -12,7 +12,8 @@ export async function POST(request: NextRequest) {
 
   const model = type === "task" ? prisma.task :
                 type === "section" ? prisma.section :
-                type === "project" ? prisma.project : null;
+                type === "project" ? prisma.project :
+                type === "projectLink" ? prisma.projectLink : null;
 
   if (!model) {
     return NextResponse.json({ error: "Invalid type" }, { status: 400 });

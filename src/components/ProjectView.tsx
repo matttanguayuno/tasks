@@ -151,6 +151,7 @@ export function ProjectView({ project, onRefresh, pushAction, initialTaskId, onI
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null);
   const [confirmDeleteSection, setConfirmDeleteSection] = useState<SectionWithTasks | null>(null);
   const [insertingAfterTaskId, setInsertingAfterTaskId] = useState<string | null>(null);
+  const [addingTaskAtTopOfSection, setAddingTaskAtTopOfSection] = useState<string | null>(null);
   const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
   const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
   const [editSectionName, setEditSectionName] = useState("");
@@ -794,6 +795,33 @@ export function ProjectView({ project, onRefresh, pushAction, initialTaskId, onI
     return ref.id;
   };
 
+  const handleCreateTaskAtTop = async (sectionId: string) => {
+    if (!newTaskTitle.trim()) return;
+    creatingTaskRef.current = true;
+    const title = newTaskTitle.trim();
+    const created = await api.tasks.create({ title, sectionId }) as { id: string };
+    const ref = { id: created.id };
+
+    // Reorder to place new task at position 0 (top)
+    const section = sections.find((s) => s.id === sectionId);
+    if (section) {
+      const reordered = [
+        { id: created.id } as TaskWithRelations,
+        ...section.tasks,
+      ].map((t, i) => ({ id: t.id, order: i }));
+      await api.reorder(reordered, "task");
+    }
+
+    pushAction?.({
+      undo: async () => { await api.tasks.delete(ref.id); },
+      redo: async () => { const re = await api.tasks.create({ title, sectionId }) as { id: string }; ref.id = re.id; },
+    });
+    setNewTaskTitle("");
+    // Keep input open for chain-adding
+    onRefresh();
+    creatingTaskRef.current = false;
+  };
+
   const handleToggleComplete = async (task: TaskWithRelations) => {
     const wasCompleted = task.completed;
     await api.tasks.update(task.id, { completed: !wasCompleted });
@@ -1087,6 +1115,13 @@ export function ProjectView({ project, onRefresh, pushAction, initialTaskId, onI
       if (!isEditing && e.key === "Enter" && selectedTask && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
         e.preventDefault();
         setInsertingAfterTaskId(selectedTask.id);
+        setNewTaskTitle("");
+      }
+
+      // Enter on selected section: add task at top of section
+      if (!isEditing && e.key === "Enter" && selectedSectionId && !selectedTask && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+        e.preventDefault();
+        setAddingTaskAtTopOfSection(selectedSectionId);
         setNewTaskTitle("");
       }
 
@@ -1533,7 +1568,12 @@ export function ProjectView({ project, onRefresh, pushAction, initialTaskId, onI
         onDragCancel={handleDragCancel}
       >
       {/* Task list */}
-      <div ref={scrollContainerRef} className={`flex-1 overflow-auto p-6 ${selectedTask ? "hidden md:block" : ""}`}>
+      <div ref={scrollContainerRef} className={`flex-1 overflow-auto p-6 ${selectedTask ? "hidden md:block" : ""}`} onClick={(e) => {
+        if (selectedTask && !(e.target as HTMLElement).closest('[data-sortable-task-id], button, a, input, textarea, select, [contenteditable="true"], [role="button"]')) {
+          selectingTaskIdRef.current = null;
+          setSelectedTask(null);
+        }
+      }}>
         <SortableContext
           items={sections.map((s) => `${SECTION_SORT_PREFIX}${s.id}`)}
           strategy={verticalListSortingStrategy}
@@ -1680,6 +1720,49 @@ export function ProjectView({ project, onRefresh, pushAction, initialTaskId, onI
                 strategy={verticalListSortingStrategy}
               >
                 <DroppableSection sectionId={section.id} disabled={!!activeSectionDragId}>
+                {addingTaskAtTopOfSection === section.id && (
+                  <div
+                    className="flex items-center gap-2 py-1.5 px-2"
+                    onBlur={(e) => {
+                      if (creatingTaskRef.current) return;
+                      if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+                        if (newTaskTitle.trim()) {
+                          handleCreateTaskAtTop(section.id);
+                        } else {
+                          setAddingTaskAtTopOfSection(null);
+                          setNewTaskTitle("");
+                        }
+                      }
+                    }}
+                  >
+                    <input
+                      type="text"
+                      value={newTaskTitle}
+                      onChange={(e) => setNewTaskTitle(e.target.value)}
+                      onKeyDown={async (e) => {
+                        if (e.key === "Enter") handleCreateTaskAtTop(section.id);
+                        if (e.key === "Escape") {
+                          setAddingTaskAtTopOfSection(null);
+                          setNewTaskTitle("");
+                        }
+                      }}
+                      ref={(el) => {
+                        newTaskInputRef.current = el;
+                        if (el) el.focus();
+                      }}
+                      placeholder="Task name"
+                      data-unsaved-check
+                      className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                      autoFocus
+                    />
+                    <button
+                      onClick={() => { setAddingTaskAtTopOfSection(null); setNewTaskTitle(""); }}
+                      className="px-2 py-1 text-sm text-gray-500 hover:bg-gray-100 rounded"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
                 {flatList.map((item, _flatIdx) => {
                   if (item.kind === "add-subtask") {
                     if (insertingAfterTaskId) return null;
