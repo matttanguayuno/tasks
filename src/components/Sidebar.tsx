@@ -97,6 +97,8 @@ function ContextMenu({
   y,
   currentColor,
   sortDirection,
+  isArchived,
+  onArchive,
   onDelete,
   onChangeColor,
   onSortAlphabetically,
@@ -106,6 +108,8 @@ function ContextMenu({
   y: number;
   currentColor: string;
   sortDirection: "asc" | "desc";
+  isArchived: boolean;
+  onArchive: () => void;
   onDelete: () => void;
   onChangeColor: (color: string) => void;
   onSortAlphabetically: () => void;
@@ -159,6 +163,15 @@ function ContextMenu({
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12" />
           </svg>
           Sort A–Z {sortDirection === "desc" ? "(next: Z–A)" : ""}
+        </button>
+        <button
+          onClick={onArchive}
+          className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-300 transition-colors text-left"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
+          </svg>
+          {isArchived ? "Unarchive project" : "Archive project"}
         </button>
         <button
           onClick={onDelete}
@@ -361,8 +374,19 @@ export function Sidebar({
   const [deleteTarget, setDeleteTarget] = useState<ProjectSummary | null>(null);
   const [renamingProjectId, setRenamingProjectId] = useState<string | null>(null);
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+  const [archivedProjects, setArchivedProjects] = useState<ProjectSummary[]>([]);
+  const [showArchived, setShowArchived] = useState(false);
 
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
+
+  const loadArchivedProjects = useCallback(async () => {
+    const data = await api.projects.list({ archived: true });
+    setArchivedProjects(data as ProjectSummary[]);
+  }, []);
+
+  useEffect(() => {
+    loadArchivedProjects();
+  }, [loadArchivedProjects]);
 
   const handleCreateProject = async () => {
     if (!newProjectName.trim()) return;
@@ -414,6 +438,38 @@ export function Sidebar({
         />
       )}
 
+      {/* Collapsed sidebar strip (desktop only) */}
+      {!isOpen && (
+        <div className="hidden lg:flex flex-col bg-gray-200 border-r border-gray-300 w-12 shrink-0">
+          <div className="h-14 flex items-center justify-center border-b border-gray-300">
+            <button
+              onClick={onToggle}
+              className="p-2 hover:bg-gray-300 rounded"
+              title="Expand sidebar"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+          </div>
+          <div className="flex-1 overflow-auto py-3 flex flex-col items-center gap-2">
+            {projects.map((project) => (
+              <button
+                key={project.id}
+                onClick={() => onSelectProject(project.id)}
+                className={`w-7 h-7 rounded-md flex items-center justify-center transition-colors ${
+                  activeProjectId === project.id
+                    ? "ring-2 ring-indigo-500 ring-offset-1 ring-offset-gray-200"
+                    : "hover:ring-2 hover:ring-gray-400 hover:ring-offset-1 hover:ring-offset-gray-200"
+                }`}
+                style={{ backgroundColor: project.color }}
+                title={project.name}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
       <aside
         ref={sidebarRef}
         className={`
@@ -421,10 +477,10 @@ export function Sidebar({
           bg-gray-200 border-r border-gray-300
           flex flex-col relative
           transform transition-transform duration-200
-          ${isOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0 lg:w-0 lg:min-w-0 lg:overflow-hidden lg:border-0"}
+          ${isOpen ? "translate-x-0" : "-translate-x-full lg:hidden"}
           ${sidebarWidth === 0 ? "w-64" : ""}
         `}
-        style={sidebarWidth > 0 ? { width: sidebarWidth } : undefined}
+        style={sidebarWidth > 0 && isOpen ? { width: sidebarWidth } : undefined}
       >
         {/* Resize handle */}
         <div
@@ -540,6 +596,51 @@ export function Sidebar({
               No projects yet. Click + to create one.
             </p>
           )}
+
+          {/* Archived projects */}
+          {archivedProjects.length > 0 && (
+            <div className="mt-4">
+              <button
+                onClick={() => setShowArchived(!showArchived)}
+                className="px-4 mb-1 flex items-center gap-1 w-full text-left"
+              >
+                <svg className={`w-3 h-3 text-gray-400 transition-transform ${showArchived ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+                <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Archived</span>
+                <span className="text-xs text-gray-400 ml-auto">{archivedProjects.length}</span>
+              </button>
+              {showArchived && (
+                <ul className="space-y-0.5 px-2">
+                  {archivedProjects.map((project) => (
+                    <li key={project.id}>
+                      <div
+                        onClick={() => {
+                          onSelectProject(project.id);
+                          if (window.innerWidth < 1024) onToggle();
+                        }}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          setContextMenu({ x: e.clientX, y: e.clientY, projectId: project.id });
+                        }}
+                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors text-left cursor-pointer ${
+                          activeProjectId === project.id
+                            ? "bg-indigo-50 text-indigo-700 font-medium"
+                            : "text-gray-500 hover:bg-gray-300"
+                        }`}
+                      >
+                        <div
+                          className="w-3 h-3 rounded-sm shrink-0 opacity-50"
+                          style={{ backgroundColor: project.color }}
+                        />
+                        <span className="truncate">{project.name}</span>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
         </nav>
 
         <div className="border-t border-gray-200 p-3 space-y-1">
@@ -595,12 +696,14 @@ export function Sidebar({
         <ContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
-          currentColor={projects.find((p) => p.id === contextMenu.projectId)?.color || PROJECT_COLORS[0]}
+          currentColor={[...projects, ...archivedProjects].find((p) => p.id === contextMenu.projectId)?.color || PROJECT_COLORS[0]}
           sortDirection={sortDirection}
+          isArchived={archivedProjects.some((p) => p.id === contextMenu.projectId)}
           onChangeColor={async (color) => {
             await api.projects.update(contextMenu.projectId, { color });
             setContextMenu(null);
             onProjectsChange();
+            loadArchivedProjects();
           }}
           onSortAlphabetically={async () => {
             const sorted = [...projects].sort((a, b) =>
@@ -614,8 +717,15 @@ export function Sidebar({
             setSortDirection(sortDirection === "asc" ? "desc" : "asc");
             setContextMenu(null);
           }}
+          onArchive={async () => {
+            const isArchived = archivedProjects.some((p) => p.id === contextMenu.projectId);
+            await api.projects.update(contextMenu.projectId, { archived: !isArchived });
+            setContextMenu(null);
+            onProjectsChange();
+            loadArchivedProjects();
+          }}
           onDelete={() => {
-            const p = projects.find((p) => p.id === contextMenu.projectId);
+            const p = [...projects, ...archivedProjects].find((p) => p.id === contextMenu.projectId);
             if (p) setDeleteTarget(p);
             setContextMenu(null);
           }}

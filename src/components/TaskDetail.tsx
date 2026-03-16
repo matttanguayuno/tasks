@@ -9,8 +9,9 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { api } from "@/lib/api";
-import type { TaskWithRelations } from "@/lib/types";
+import type { TaskWithRelations, Sprint } from "@/lib/types";
 import type { UndoAction } from "@/hooks/useUndoRedo";
+import AssigneeInput from "./AssigneeInput";
 
 const PRIORITIES = ["LOW", "MEDIUM", "HIGH"] as const;
 const PRIORITY_LABELS: Record<string, string> = { LOW: "Low", MEDIUM: "Med", HIGH: "High" };
@@ -19,6 +20,7 @@ const PRIORITY_COLORS_IDLE: Record<string, string> = { LOW: "bg-blue-50 text-blu
 
 interface TaskDetailProps {
   task: TaskWithRelations;
+  projectId?: string;
   onClose: () => void;
   onRefresh: () => void;
   onDelete?: () => void;
@@ -163,7 +165,80 @@ function RequesterInput({ value, onChange }: { value: string; onChange: (val: st
   );
 }
 
-export function TaskDetail({ task, onClose, onRefresh, onDelete, onSelectTask, pushAction }: TaskDetailProps) {
+function SprintSelector({ taskId, projectId, onUpdate }: { taskId: string; projectId: string; onUpdate: () => void }) {
+  const [sprints, setSprints] = useState<Sprint[]>([]);
+  const [currentSprintId, setCurrentSprintId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      const sprintList = (await api.sprints.list(projectId)) as Sprint[];
+      if (cancelled) return;
+      setSprints(sprintList);
+
+      // Check each sprint to see if this task is in it
+      for (const sprint of sprintList) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const sprintData = (await api.sprints.get(projectId, sprint.id)) as any;
+        if (cancelled) return;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const found = sprintData.sprintTasks?.some((st: any) => st.taskId === taskId);
+        if (found) {
+          setCurrentSprintId(sprint.id);
+          break;
+        }
+      }
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [projectId, taskId]);
+
+  const handleChange = async (newSprintId: string) => {
+    // Remove from current sprint
+    if (currentSprintId) {
+      await api.sprints.removeTask(projectId, currentSprintId, taskId);
+    }
+
+    if (newSprintId) {
+      // Add to new sprint
+      await api.sprints.addTasks(projectId, newSprintId, [taskId]);
+      setCurrentSprintId(newSprintId);
+    } else {
+      setCurrentSprintId(null);
+    }
+    onUpdate();
+  };
+
+  if (loading || sprints.length === 0) return null;
+
+  return (
+    <div>
+      <label className="text-sm font-medium text-gray-600 mb-1 block">Sprint</label>
+      <select
+        value={currentSprintId || ""}
+        onChange={(e) => handleChange(e.target.value)}
+        className="w-full px-2 py-1 text-sm border border-gray-200 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+      >
+        <option value="">None</option>
+        {sprints.map((s) => {
+          const now = new Date();
+          const start = new Date(s.startDate);
+          const end = new Date(s.endDate);
+          const isActive = s.status !== "CLOSED" && now >= start && now <= end;
+          return (
+            <option key={s.id} value={s.id}>
+              Sprint {s.number}{isActive ? " ● Active" : s.status === "CLOSED" ? " (Closed)" : ""}
+            </option>
+          );
+        })}
+      </select>
+    </div>
+  );
+}
+
+export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSelectTask, pushAction }: TaskDetailProps) {
   const [title, setTitle] = useState(task.title);
   const [editingTitle, setEditingTitle] = useState(false);
   const [description, setDescription] = useState(task.description);
@@ -171,16 +246,30 @@ export function TaskDetail({ task, onClose, onRefresh, onDelete, onSelectTask, p
   const [selectedSubtaskId, setSelectedSubtaskId] = useState<string | null>(null);
   const [newComment, setNewComment] = useState("");
   const commentEditorRef = useRef<{ clear: () => void } | null>(null);
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [editCommentContent, setEditCommentContent] = useState("");
+  const editCommentEditorRef = useRef<{ clear: () => void; setContent: (html: string) => void } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [confirmDeleteSelf, setConfirmDeleteSelf] = useState(false);
   const [hyperlinkDialog, setHyperlinkDialog] = useState<{ url: string } | null>(null);
   const [linkPopup, setLinkPopup] = useState<{ url: string; rect: DOMRect } | null>(null);
+  const [addingLink, setAddingLink] = useState(false);
+  const [linkName, setLinkName] = useState("");
+  const [linkUrl, setLinkUrl] = useState("");
   const dragCounter = useRef(0);
   // Keep a ref to onRefresh so async updateField always calls the latest version
   const onRefreshRef = useRef(onRefresh);
   onRefreshRef.current = onRefresh;
+
+  // Auto-refresh task data every 15s to pick up Trello-synced comments
+  useEffect(() => {
+    const interval = setInterval(() => {
+      onRefreshRef.current();
+    }, 15_000);
+    return () => clearInterval(interval);
+  }, [task.id]);
 
   // Synchronously reset local state when the task changes, BEFORE children
   // render. This avoids a stale `description` being passed to the editor on
@@ -199,6 +288,15 @@ export function TaskDetail({ task, onClose, onRefresh, onDelete, onSelectTask, p
   const resizing = useRef(false);
   const startX = useRef(0);
   const startWidth = useRef(0);
+
+  const [parentTitle, setParentTitle] = useState<string | null>(null);
+  useEffect(() => {
+    if (task.parentId) {
+      api.tasks.get(task.parentId).then((t) => setParentTitle((t as TaskWithRelations).title)).catch(() => setParentTitle(null));
+    } else {
+      setParentTitle(null);
+    }
+  }, [task.parentId]);
   const panelRef = useRef<HTMLDivElement>(null);
 
   // Restore saved width from localStorage after mount
@@ -352,6 +450,14 @@ export function TaskDetail({ task, onClose, onRefresh, onDelete, onSelectTask, p
     onRefresh();
   };
 
+  const handleEditComment = async (commentId: string) => {
+    if (!editCommentContent.trim()) return;
+    await api.comments.update(task.id, commentId, { content: editCommentContent.trim() });
+    setEditingCommentId(null);
+    setEditCommentContent("");
+    onRefresh();
+  };
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -471,7 +577,7 @@ export function TaskDetail({ task, onClose, onRefresh, onDelete, onSelectTask, p
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
-            Parent task
+            {parentTitle || "Parent task"}
           </button>
         ) : (
           <button
@@ -506,9 +612,10 @@ export function TaskDetail({ task, onClose, onRefresh, onDelete, onSelectTask, p
         <button
           onClick={onClose}
           className="p-1 hover:bg-gray-100 rounded hidden md:block"
+          title="Close panel"
         >
-          <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          <svg className="w-5 h-5 text-gray-400 hover:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
           </svg>
         </button>
       </div>
@@ -613,7 +720,7 @@ export function TaskDetail({ task, onClose, onRefresh, onDelete, onSelectTask, p
         <div className="grid grid-cols-4 gap-4 text-sm">
           {/* Priority */}
           <div>
-            <label className="text-xs text-gray-500 mb-1 block">Priority</label>
+            <label className="text-sm font-medium text-gray-600 mb-1 block">Priority</label>
             <div className="flex gap-1">
               <button
                 onClick={() => updateField("priority", null)}
@@ -639,7 +746,7 @@ export function TaskDetail({ task, onClose, onRefresh, onDelete, onSelectTask, p
 
           {/* Status */}
           <div>
-            <label className="text-xs text-gray-500 mb-1 block">Status</label>
+            <label className="text-sm font-medium text-gray-600 mb-1 block">Status</label>
             <button
               onClick={() => updateField("inProgress", !task.inProgress)}
               className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
@@ -654,7 +761,7 @@ export function TaskDetail({ task, onClose, onRefresh, onDelete, onSelectTask, p
 
           {/* Due date */}
           <div>
-            <label className="text-xs text-gray-500 mb-1 block">Due date</label>
+            <label className="text-sm font-medium text-gray-600 mb-1 block">Due date</label>
             <input
               type="date"
               value={task.dueDate ? new Date(task.dueDate).toISOString().split("T")[0] : ""}
@@ -665,15 +772,38 @@ export function TaskDetail({ task, onClose, onRefresh, onDelete, onSelectTask, p
 
           {/* Requested by */}
           <div>
-            <label className="text-xs text-gray-500 mb-1 block">Requested by</label>
+            <label className="text-sm font-medium text-gray-600 mb-1 block">Requested by</label>
             <RequesterInput
               value={task.requestedBy || ""}
               onChange={(val) => updateField("requestedBy", val || null)}
             />
           </div>
+
+          {/* Assignees */}
+          <div>
+            <label className="text-sm font-medium text-gray-600 mb-1 block">Assignees</label>
+            <AssigneeInput
+              taskId={task.id}
+              assignees={task.assignees || []}
+              onUpdate={onRefresh}
+            />
+          </div>
         </div>
+
+        {/* Created date */}
+        <div className="text-xs text-gray-400">
+          Created {new Date(task.createdAt).toLocaleDateString("en-US", {
+            month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit",
+          })}
+        </div>
+
+        {/* Sprint selector */}
+        {projectId && (
+          <SprintSelector taskId={task.id} projectId={projectId} onUpdate={onRefresh} />
+        )}
+
         <div>
-          <label className="text-xs text-gray-500 mb-1 block">Description</label>
+          <label className="text-sm font-medium text-gray-600 mb-1 block">Description</label>
           <RichDescriptionEditor
             value={description}
             taskId={task.id}
@@ -691,7 +821,7 @@ export function TaskDetail({ task, onClose, onRefresh, onDelete, onSelectTask, p
 
         {/* Subtasks */}
         <div>
-          <label className="text-xs text-gray-500 mb-2 block">
+          <label className="text-sm font-medium text-gray-600 mb-2 block">
             Subtasks {task.subtasks && task.subtasks.length > 0 && (
               <span className="text-gray-400">
                 ({task.subtasks.filter((s) => s.completed).length}/{task.subtasks.length})
@@ -749,18 +879,26 @@ export function TaskDetail({ task, onClose, onRefresh, onDelete, onSelectTask, p
 
         {/* Attachments */}
         <div>
-          <label className="text-xs text-gray-500 mb-2 block">Attachments</label>
+          <label className="text-sm font-medium text-gray-600 mb-2 block">Attachments</label>
           {task.attachments && task.attachments.length > 0 && (
             <div className="space-y-1 mb-2">
-              {task.attachments.map((att) => (
+              {task.attachments.map((att) => {
+                const isLink = att.mimeType === "text/x-uri";
+                return (
                 <div key={att.id} className="flex items-center gap-2 px-2 py-1.5 bg-gray-50 rounded text-sm group">
-                  <svg className="w-4 h-4 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-                  </svg>
+                  {isLink ? (
+                    <svg className="w-4 h-4 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                    </svg>
+                  ) : (
+                    <svg className="w-4 h-4 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                    </svg>
+                  )}
                   <a href={att.url} target="_blank" rel="noopener noreferrer" className="flex-1 truncate text-indigo-600 hover:underline">
                     {att.filename}
                   </a>
-                  <span className="text-xs text-gray-400">{formatFileSize(att.size)}</span>
+                  {!isLink && <span className="text-xs text-gray-400">{formatFileSize(att.size)}</span>}
                   <button
                     onClick={() => setConfirmDelete(att.id)}
                     className="p-0.5 opacity-0 group-hover:opacity-100 hover:text-red-500 text-gray-400"
@@ -770,24 +908,93 @@ export function TaskDetail({ task, onClose, onRefresh, onDelete, onSelectTask, p
                     </svg>
                   </button>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
           <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            className="flex items-center gap-1 text-sm text-gray-500 hover:text-indigo-600 transition-colors"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-            </svg>
-            Attach file
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center gap-1 text-sm text-gray-500 hover:text-indigo-600 transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+              </svg>
+              Attach file
+            </button>
+            <button
+              onClick={() => setAddingLink(true)}
+              className="flex items-center gap-1 text-sm text-gray-500 hover:text-indigo-600 transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+              </svg>
+              Attach link
+            </button>
+          </div>
+          {addingLink && (
+            <div className="mt-2 space-y-2 bg-gray-50 rounded-lg p-3">
+              <input
+                autoFocus
+                type="url"
+                value={linkUrl}
+                onChange={(e) => setLinkUrl(e.target.value)}
+                placeholder="https://..."
+                className="w-full px-2 py-1 text-sm border border-gray-200 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                onKeyDown={async (e) => {
+                  if (e.key === "Escape") { setAddingLink(false); setLinkUrl(""); setLinkName(""); }
+                  if (e.key === "Enter" && linkUrl.trim()) {
+                    let name = linkName.trim();
+                    if (!name) try { name = new URL(linkUrl.trim()).hostname; } catch { name = linkUrl.trim(); }
+                    await api.attachments.addLink(task.id, { name, url: linkUrl.trim() });
+                    setAddingLink(false); setLinkUrl(""); setLinkName(""); onRefresh();
+                  }
+                }}
+              />
+              <input
+                type="text"
+                value={linkName}
+                onChange={(e) => setLinkName(e.target.value)}
+                placeholder="Display name (optional)"
+                className="w-full px-2 py-1 text-sm border border-gray-200 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                onKeyDown={async (e) => {
+                  if (e.key === "Escape") { setAddingLink(false); setLinkUrl(""); setLinkName(""); }
+                  if (e.key === "Enter" && linkUrl.trim()) {
+                    let name = linkName.trim();
+                    if (!name) try { name = new URL(linkUrl.trim()).hostname; } catch { name = linkUrl.trim(); }
+                    await api.attachments.addLink(task.id, { name, url: linkUrl.trim() });
+                    setAddingLink(false); setLinkUrl(""); setLinkName(""); onRefresh();
+                  }
+                }}
+              />
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => { setAddingLink(false); setLinkUrl(""); setLinkName(""); }}
+                  className="px-2 py-1 text-xs text-gray-500 hover:bg-gray-200 rounded"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    if (!linkUrl.trim()) return;
+                    let name = linkName.trim();
+                    if (!name) try { name = new URL(linkUrl.trim()).hostname; } catch { name = linkUrl.trim(); }
+                    await api.attachments.addLink(task.id, { name, url: linkUrl.trim() });
+                    setAddingLink(false); setLinkUrl(""); setLinkName(""); onRefresh();
+                  }}
+                  className="px-2 py-1 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700"
+                >
+                  Add
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Comments */}
         <div>
-          <label className="text-xs text-gray-500 mb-2 block">
+          <label className="text-sm font-medium text-gray-600 mb-2 block">
             Comments {task.comments && task.comments.length > 0 && `(${task.comments.length})`}
           </label>
           <div className="space-y-3 mb-3">
@@ -798,17 +1005,68 @@ export function TaskDetail({ task, onClose, onRefresh, onDelete, onSelectTask, p
                     {new Date(comment.createdAt).toLocaleDateString("en-US", {
                       month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
                     })}
+                    {comment.updatedAt && comment.updatedAt !== comment.createdAt && (
+                      <span className="ml-1 text-gray-300">(edited)</span>
+                    )}
                   </span>
-                  <button
-                    onClick={() => handleDeleteComment(comment.id)}
-                    className="p-0.5 opacity-0 group-hover:opacity-100 hover:text-red-500 text-gray-400"
-                  >
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => {
+                        setEditingCommentId(comment.id);
+                        setEditCommentContent(comment.content);
+                      }}
+                      className="p-0.5 opacity-0 group-hover:opacity-100 hover:text-indigo-500 text-gray-400"
+                      title="Edit comment"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                      </svg>
+                    </button>
+                    <button
+                      onClick={() => handleDeleteComment(comment.id)}
+                      className="p-0.5 opacity-0 group-hover:opacity-100 hover:text-red-500 text-gray-400"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
                 </div>
-                <div className="text-sm text-gray-700"><RichText text={comment.content} /></div>
+                {editingCommentId === comment.id ? (
+                  <div className="flex gap-2">
+                    <RichCommentInput
+                      ref={editCommentEditorRef}
+                      onChange={setEditCommentContent}
+                      onSubmit={(content) => {
+                        setEditCommentContent(content);
+                        handleEditComment(comment.id);
+                      }}
+                      uploadImage={async (file) => {
+                        dragCounter.current = 0;
+                        setDragging(false);
+                        return await uploadImageAndGetUrl(file);
+                      }}
+                      taskId={task.id}
+                      initialValue={comment.content}
+                    />
+                    <div className="flex flex-col gap-1 self-end">
+                      <button
+                        onClick={() => handleEditComment(comment.id)}
+                        className="px-2 py-1 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700"
+                      >
+                        Save
+                      </button>
+                      <button
+                        onClick={() => { setEditingCommentId(null); setEditCommentContent(""); }}
+                        className="px-2 py-1 text-xs text-gray-500 hover:bg-gray-200 rounded"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-sm text-gray-700"><RichText text={comment.content} /></div>
+                )}
               </div>
             ))}
           </div>
@@ -1022,6 +1280,145 @@ function SortableSubtaskRow({
       </button>
     </div>
   );
+}
+
+/** ──── Shared rich-text helpers ──── */
+
+const ALLOWED_TAGS = new Set(["B", "STRONG", "I", "EM", "U", "UL", "OL", "LI", "BR", "DIV", "P", "IMG", "A", "SPAN"]);
+const FORMATTING_TAGS = new Set(["B", "STRONG", "I", "EM", "U"]);
+
+/** Check whether stored content already contains HTML formatting */
+function isHtmlContent(s: string): boolean {
+  return /<(?:b|strong|i|em|u|ul|ol|li|br|div|p|img|a|span)\b/i.test(s);
+}
+
+/** Convert legacy plaintext (with markdown images) to HTML for the editor */
+function legacyToHtml(md: string): string {
+  if (!md) return "";
+  return md
+    .split(/(!\[[^\]]*\]\([^)]+\)(?:\{[^}]+\})?)/g)
+    .map((part) => {
+      const m = part.match(/^!\[([^\]]*)\]\(([^)]+)\)(?:\{([^}]+)\})?$/);
+      if (m) {
+        const alt = m[1].replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+        const src = m[2].replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+        const widthStyle = m[3] && /^\d+(%|px)$/.test(m[3]) ? ` style="width: ${m[3]}; height: auto"` : "";
+        return `<img src="${src}" alt="${alt}"${widthStyle} class="max-w-full rounded-lg my-1 inline-block" contenteditable="false" />`;
+      }
+      return part
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/(https?:\/\/[^\s<>)"',]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer" class="text-indigo-600 underline decoration-indigo-300 hover:decoration-indigo-600">$1</a>')
+        .replace(/\n/g, "<br>");
+    })
+    .join("");
+}
+
+/** Convert stored value → editor innerHTML (handles both legacy text and HTML) */
+function valueToHtml(value: string): string {
+  if (!value) return "";
+  if (isHtmlContent(value)) return value;
+  return legacyToHtml(value);
+}
+
+/** Extract clean HTML from the contentEditable DOM, preserving formatting */
+function domToHtml(el: HTMLElement): string {
+  let result = "";
+  for (const node of Array.from(el.childNodes)) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const text = node.textContent || "";
+      result += text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    } else if (node.nodeType === Node.ELEMENT_NODE) {
+      const element = node as HTMLElement;
+      const tag = element.tagName;
+      if (tag === "IMG") {
+        const imgWidth = (element as HTMLImageElement).style.width;
+        const widthStyle = imgWidth && /^\d+(%|px)$/.test(imgWidth) ? ` style="width: ${imgWidth}; height: auto"` : "";
+        const alt = (element.getAttribute("alt") || "").replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+        const src = (element.getAttribute("src") || "").replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+        result += `<img src="${src}" alt="${alt}"${widthStyle} class="max-w-full rounded-lg my-1 inline-block" contenteditable="false" />`;
+      } else if (tag === "A") {
+        const href = (element.getAttribute("href") || "").replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+        result += `<a href="${href}" target="_blank" rel="noopener noreferrer" class="text-indigo-600 underline decoration-indigo-300 hover:decoration-indigo-600">${domToHtml(element)}</a>`;
+      } else if (tag === "BR") {
+        result += "<br>";
+      } else if (tag === "UL" || tag === "OL") {
+        const inner = domToHtml(element);
+        result += `<${tag.toLowerCase()} class="${tag === "UL" ? "list-disc" : "list-decimal"} ml-5 my-1">${inner}</${tag.toLowerCase()}>`;
+      } else if (tag === "LI") {
+        result += `<li>${domToHtml(element)}</li>`;
+      } else if (FORMATTING_TAGS.has(tag)) {
+        const t = tag.toLowerCase();
+        result += `<${t}>${domToHtml(element)}</${t}>`;
+      } else if (tag === "DIV" || tag === "P") {
+        if (result && !result.endsWith("<br>") && !result.endsWith("</ul>") && !result.endsWith("</ol>") && !result.endsWith("</li>")) result += "<br>";
+        result += domToHtml(element);
+      } else if (tag === "SPAN") {
+        result += domToHtml(element);
+      } else {
+        result += domToHtml(element);
+      }
+    }
+  }
+  return result;
+}
+
+/** Handle formatting keyboard shortcuts. Returns true if handled. */
+function handleFormattingKey(e: React.KeyboardEvent, editorRef: React.RefObject<HTMLDivElement | null>, history: { snapshot: () => void }): boolean {
+  if (!(e.metaKey || e.ctrlKey)) return false;
+  const key = e.key.toLowerCase();
+
+  // Ctrl+B / Ctrl+I / Ctrl+U
+  if (key === "b" || key === "i" || key === "u") {
+    e.preventDefault();
+    history.snapshot();
+    document.execCommand(key === "b" ? "bold" : key === "i" ? "italic" : "underline", false);
+    return true;
+  }
+
+  // Ctrl+Shift+8 = bullet list, Ctrl+Shift+7 = numbered list
+  if (e.shiftKey && (e.code === "Digit8" || e.code === "Digit7")) {
+    e.preventDefault();
+    history.snapshot();
+    document.execCommand(e.code === "Digit8" ? "insertUnorderedList" : "insertOrderedList", false);
+    return true;
+  }
+
+  return false;
+}
+
+/** Auto-convert "- " at the start of a line into a bullet list. Returns true if converted. */
+function handleAutoList(e: React.KeyboardEvent, editorRef: React.RefObject<HTMLDivElement | null>, history: { snapshot: () => void }): boolean {
+  if (e.key !== " ") return false;
+  const sel = window.getSelection();
+  if (!sel || !sel.isCollapsed || sel.rangeCount === 0) return false;
+  const range = sel.getRangeAt(0);
+  const container = range.startContainer;
+  if (container.nodeType !== Node.TEXT_NODE) return false;
+  const text = container.textContent || "";
+  const offset = range.startOffset;
+  // Check if cursor is right after "- " pattern (the dash was just typed, now space is pressed)
+  const beforeCursor = text.substring(0, offset);
+  // The text before cursor should end with "-" and be at the start of the text node
+  // or after a newline
+  if (beforeCursor === "-" || beforeCursor.endsWith("\n-")) {
+    e.preventDefault();
+    history.snapshot();
+    // Remove the "- " from the text node
+    const dashStart = beforeCursor.lastIndexOf("-");
+    container.textContent = text.substring(0, dashStart) + text.substring(offset);
+    // Place cursor
+    const newRange = document.createRange();
+    newRange.setStart(container, dashStart);
+    newRange.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(newRange);
+    // Convert to unordered list
+    document.execCommand("insertUnorderedList", false);
+    return true;
+  }
+  return false;
 }
 
 /** Custom undo/redo for contentEditable editors (native undo breaks with manual DOM ops) */
@@ -1255,58 +1652,10 @@ export function RichDescriptionEditor({
     return () => document.removeEventListener("mousedown", handler);
   }, [selectedImg]);
 
-  function toHtml(md: string): string {
-    if (!md) return "";
-    return md
-      .split(/(!\[[^\]]*\]\([^)]+\)(?:\{[^}]+\})?)/g)
-      .map((part) => {
-        const m = part.match(/^!\[([^\]]*)\]\(([^)]+)\)(?:\{([^}]+)\})?$/);
-        if (m) {
-          const alt = m[1].replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
-          const src = m[2].replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
-          const widthStyle = m[3] && /^\d+(%|px)$/.test(m[3]) ? ` style="width: ${m[3]}; height: auto"` : "";
-          return `<img src="${src}" alt="${alt}"${widthStyle} class="max-w-full rounded-lg my-1 inline-block" contenteditable="false" />`;
-        }
-        return part
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;")
-          .replace(/(https?:\/\/[^\s<>)"',]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer" class="text-indigo-600 underline decoration-indigo-300 hover:decoration-indigo-600" contenteditable="false">$1</a>')
-          .replace(/\n/g, "<br>");
-      })
-      .join("");
-  }
-
-  function toMarkdown(el: HTMLElement): string {
-    let result = "";
-    for (const node of Array.from(el.childNodes)) {
-      if (node.nodeType === Node.TEXT_NODE) {
-        result += node.textContent || "";
-      } else if (node.nodeType === Node.ELEMENT_NODE) {
-        const element = node as HTMLElement;
-        if (element.tagName === "IMG") {
-          const imgWidth = (element as HTMLImageElement).style.width;
-          const widthSuffix = imgWidth && /^\d+(%|px)$/.test(imgWidth) ? `{${imgWidth}}` : "";
-          result += `![${element.getAttribute("alt") || ""}](${element.getAttribute("src") || ""})${widthSuffix}`;
-        } else if (element.tagName === "A") {
-          result += element.getAttribute("href") || element.textContent || "";
-        } else if (element.tagName === "BR") {
-          result += "\n";
-        } else if (element.tagName === "DIV" || element.tagName === "P") {
-          if (result && !result.endsWith("\n")) result += "\n";
-          result += toMarkdown(element);
-        } else {
-          result += toMarkdown(element);
-        }
-      }
-    }
-    return result;
-  }
-
   // Set HTML on mount and task switch
   useEffect(() => {
     if (editorRef.current) {
-      const html = toHtml(value) || "";
+      const html = valueToHtml(value) || "";
       editorRef.current.innerHTML = html;
       internalValue.current = value;
       setEmpty(!value);
@@ -1315,9 +1664,21 @@ export function RichDescriptionEditor({
     }
   }, [taskId]);
 
+  // Sync editor content when `value` prop changes externally (e.g. Trello pull)
+  // but only when the editor isn't focused to avoid disrupting active editing.
+  useEffect(() => {
+    if (editorRef.current && value !== internalValue.current &&
+        document.activeElement !== editorRef.current) {
+      const html = valueToHtml(value) || "";
+      editorRef.current.innerHTML = html;
+      internalValue.current = value;
+      setEmpty(!value);
+    }
+  }, [value]);
+
   const handleInput = () => {
     if (editorRef.current) {
-      internalValue.current = toMarkdown(editorRef.current);
+      internalValue.current = domToHtml(editorRef.current);
       setEmpty(!internalValue.current);
       history.snapshotDebounced();
     }
@@ -1325,19 +1686,19 @@ export function RichDescriptionEditor({
 
   const handleBlur = () => {
     if (editorRef.current) {
-      const md = toMarkdown(editorRef.current);
-      internalValue.current = md;
-      setEmpty(!md);
-      editorRef.current.innerHTML = toHtml(md) || "";
-      if (md !== value) {
-        onSave(md);
+      const html = domToHtml(editorRef.current);
+      internalValue.current = html;
+      setEmpty(!html);
+      editorRef.current.innerHTML = html || "";
+      if (html !== value) {
+        onSave(html);
       }
     }
   };
 
   const saveContent = () => {
     if (editorRef.current) {
-      internalValue.current = toMarkdown(editorRef.current);
+      internalValue.current = domToHtml(editorRef.current);
       setEmpty(!internalValue.current);
       onSave(internalValue.current);
     }
@@ -1366,6 +1727,65 @@ export function RichDescriptionEditor({
           }
         }}
         onKeyDown={(e) => {
+          // Rich text formatting shortcuts (Ctrl+B/I/U, Ctrl+Shift+7/8)
+          if (handleFormattingKey(e, editorRef, history)) {
+            handleInput();
+            return;
+          }
+          // Auto-convert "- " to bullet list
+          if (handleAutoList(e, editorRef, history)) {
+            handleInput();
+            return;
+          }
+          // Handle Delete/Backspace near <br> adjacent to <a> elements
+          if ((e.key === "Delete" || e.key === "Backspace") && !selectedImg && !e.metaKey && !e.ctrlKey) {
+            const sel = window.getSelection();
+            if (sel && sel.isCollapsed && sel.rangeCount > 0) {
+              const range = sel.getRangeAt(0);
+              const container = range.startContainer;
+              const offset = range.startOffset;
+
+              if (e.key === "Delete") {
+                let brNode: Node | null = null;
+                if (container.nodeType === Node.TEXT_NODE && offset === (container.textContent?.length ?? 0)) {
+                  const next = container.nextSibling;
+                  if (next && (next as HTMLElement).tagName === "BR") brNode = next;
+                } else if (container.nodeType === Node.ELEMENT_NODE) {
+                  const child = container.childNodes[offset];
+                  if (child && (child as HTMLElement).tagName === "BR") brNode = child;
+                }
+                if (brNode) {
+                  e.preventDefault();
+                  history.snapshot();
+                  brNode.parentNode?.removeChild(brNode);
+                  handleInput();
+                  return;
+                }
+              }
+
+              if (e.key === "Backspace") {
+                let brNode: Node | null = null;
+                if (container.nodeType === Node.TEXT_NODE && offset === 0) {
+                  const prev = container.previousSibling;
+                  if (prev && (prev as HTMLElement).tagName === "BR") brNode = prev;
+                  if (!brNode && container.parentElement?.tagName === "A") {
+                    const prevOfA = container.parentElement.previousSibling;
+                    if (prevOfA && (prevOfA as HTMLElement).tagName === "BR") brNode = prevOfA;
+                  }
+                } else if (container.nodeType === Node.ELEMENT_NODE && offset > 0) {
+                  const child = container.childNodes[offset - 1];
+                  if (child && (child as HTMLElement).tagName === "BR") brNode = child;
+                }
+                if (brNode) {
+                  e.preventDefault();
+                  history.snapshot();
+                  brNode.parentNode?.removeChild(brNode);
+                  handleInput();
+                  return;
+                }
+              }
+            }
+          }
           if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z" && !e.shiftKey) {
             e.preventDefault();
             if (history.undo()) {
@@ -1435,7 +1855,7 @@ export function RichDescriptionEditor({
                 } else {
                   editorRef.current.appendChild(img);
                 }
-                internalValue.current = toMarkdown(editorRef.current);
+                internalValue.current = domToHtml(editorRef.current);
                 setEmpty(false);
                 onSave(internalValue.current);
               }
@@ -1443,16 +1863,16 @@ export function RichDescriptionEditor({
             }
           }
           const html = e.clipboardData.getData("text/html");
-          if (html && /<img\s/i.test(html)) {
-            // Preserve images (e.g. cut/copy within editor)
+          if (html && /<(img|b|strong|i|em|u|ul|ol|li)\s?/i.test(html)) {
+            // Preserve images and formatting (e.g. cut/copy within editor)
             const temp = document.createElement("div");
             temp.innerHTML = html;
-            // Strip everything except img, br, and text nodes
+            // Strip everything except allowed tags and text nodes
             const clean = document.createElement("div");
-            function extractNodes(source: Node) {
+            function extractNodes(source: Node, parent: HTMLElement) {
               for (const node of Array.from(source.childNodes)) {
                 if (node.nodeType === Node.TEXT_NODE) {
-                  clean.appendChild(node.cloneNode());
+                  parent.appendChild(node.cloneNode());
                 } else if (node.nodeType === Node.ELEMENT_NODE) {
                   const el = node as HTMLElement;
                   if (el.tagName === "IMG") {
@@ -1461,16 +1881,20 @@ export function RichDescriptionEditor({
                     img.alt = el.getAttribute("alt") || "";
                     img.className = "max-w-full rounded-lg my-1 inline-block";
                     img.contentEditable = "false";
-                    clean.appendChild(img);
+                    parent.appendChild(img);
                   } else if (el.tagName === "BR") {
-                    clean.appendChild(document.createElement("br"));
+                    parent.appendChild(document.createElement("br"));
+                  } else if (FORMATTING_TAGS.has(el.tagName) || el.tagName === "UL" || el.tagName === "OL" || el.tagName === "LI") {
+                    const wrapper = document.createElement(el.tagName.toLowerCase());
+                    extractNodes(el, wrapper);
+                    parent.appendChild(wrapper);
                   } else {
-                    extractNodes(el);
+                    extractNodes(el, parent);
                   }
                 }
               }
             }
-            extractNodes(temp);
+            extractNodes(temp, clean);
             const sel = window.getSelection();
             if (sel && sel.rangeCount > 0) {
               const range = sel.getRangeAt(0);
@@ -1532,7 +1956,7 @@ export function RichDescriptionEditor({
               } else {
                 editorRef.current.appendChild(img);
               }
-              internalValue.current = toMarkdown(editorRef.current);
+              internalValue.current = domToHtml(editorRef.current);
               setEmpty(false);
               onSave(internalValue.current);
             }
@@ -1557,8 +1981,25 @@ export function RichDescriptionEditor({
   );
 }
 
-/** Renders text with inline markdown images and preserves whitespace */
+/** Sanitize HTML by parsing it through the DOM and re-serializing with only allowed tags */
+function sanitizeHtml(html: string): string {
+  if (typeof document === "undefined") return html;
+  const temp = document.createElement("div");
+  temp.innerHTML = html;
+  return domToHtml(temp);
+}
+
+/** Renders rich text (HTML or legacy plaintext with markdown images) */
 export function RichText({ text }: { text: string }) {
+  if (isHtmlContent(text)) {
+    return (
+      <div
+        className="whitespace-pre-wrap break-words rich-text-content"
+        dangerouslySetInnerHTML={{ __html: sanitizeHtml(text) }}
+      />
+    );
+  }
+  // Legacy plaintext with markdown images
   const parts = text.split(/(!\[[^\]]*\]\([^)]+\)(?:\{[^}]+\})?)/g);
   return (
     <div className="whitespace-pre-wrap break-words">
@@ -1584,14 +2025,15 @@ export function RichText({ text }: { text: string }) {
 
 /** contentEditable comment input with image paste/drop support */
 const RichCommentInput = forwardRef<
-  { clear: () => void },
+  { clear: () => void; setContent: (html: string) => void },
   {
     onChange: (val: string) => void;
     onSubmit: (val: string) => void;
     uploadImage: (file: File) => Promise<string | null>;
     taskId: string;
+    initialValue?: string;
   }
->(function RichCommentInput({ onChange, onSubmit, uploadImage, taskId }, ref) {
+>(function RichCommentInput({ onChange, onSubmit, uploadImage, taskId, initialValue }, ref) {
   const editorRef = useRef<HTMLDivElement>(null);
   const [empty, setEmpty] = useState(true);
   const [dragOver, setDragOver] = useState(false);
@@ -1611,34 +2053,8 @@ const RichCommentInput = forwardRef<
     return () => document.removeEventListener("mousedown", handler);
   }, [selectedImg]);
 
-  function toMarkdown(el: HTMLElement): string {
-    let result = "";
-    for (const node of Array.from(el.childNodes)) {
-      if (node.nodeType === Node.TEXT_NODE) {
-        result += node.textContent || "";
-      } else if (node.nodeType === Node.ELEMENT_NODE) {
-        const element = node as HTMLElement;
-        if (element.tagName === "IMG") {
-          const imgWidth = (element as HTMLImageElement).style.width;
-          const widthSuffix = imgWidth && /^\d+(%|px)$/.test(imgWidth) ? `{${imgWidth}}` : "";
-          result += `![${element.getAttribute("alt") || ""}](${element.getAttribute("src") || ""})${widthSuffix}`;
-        } else if (element.tagName === "A") {
-          result += element.getAttribute("href") || element.textContent || "";
-        } else if (element.tagName === "BR") {
-          result += "\n";
-        } else if (element.tagName === "DIV" || element.tagName === "P") {
-          if (result && !result.endsWith("\n")) result += "\n";
-          result += toMarkdown(element);
-        } else {
-          result += toMarkdown(element);
-        }
-      }
-    }
-    return result;
-  }
-
   function getValue(): string {
-    return editorRef.current ? toMarkdown(editorRef.current) : "";
+    return editorRef.current ? domToHtml(editorRef.current) : "";
   }
 
   useImperativeHandle(ref, () => ({
@@ -1649,17 +2065,28 @@ const RichCommentInput = forwardRef<
         history.init("");
       }
     },
+    setContent(html: string) {
+      if (editorRef.current) {
+        const rendered = valueToHtml(html);
+        editorRef.current.innerHTML = rendered;
+        setEmpty(!rendered);
+        history.init(rendered);
+        onChange(html);
+      }
+    },
   }));
 
-  // Reset on task switch
+  // Reset on task switch or initialize with value
   useEffect(() => {
     if (editorRef.current) {
-      editorRef.current.innerHTML = "";
-      setEmpty(true);
+      const html = initialValue ? valueToHtml(initialValue) : "";
+      editorRef.current.innerHTML = html;
+      setEmpty(!html);
       setSelectedImg(null);
-      history.init("");
+      history.init(html);
+      if (initialValue) onChange(initialValue);
     }
-  }, [taskId]);
+  }, [taskId, initialValue]);
 
   const handleInput = () => {
     const val = getValue();
@@ -1713,6 +2140,16 @@ const RichCommentInput = forwardRef<
           }
         }}
         onKeyDown={(e) => {
+          // Rich text formatting shortcuts (Ctrl+B/I/U, Ctrl+Shift+7/8)
+          if (handleFormattingKey(e, editorRef, history)) {
+            handleInput();
+            return;
+          }
+          // Auto-convert "- " to bullet list
+          if (handleAutoList(e, editorRef, history)) {
+            handleInput();
+            return;
+          }
           if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z" && !e.shiftKey) {
             e.preventDefault();
             if (history.undo()) {
@@ -1775,14 +2212,14 @@ const RichCommentInput = forwardRef<
           }
           // Check for HTML with images (cut/copy from editor)
           const html = e.clipboardData.getData("text/html");
-          if (html && /<img\s/i.test(html)) {
+          if (html && /<(img|b|strong|i|em|u|ul|ol|li)\s?/i.test(html)) {
             const temp = document.createElement("div");
             temp.innerHTML = html;
             const clean = document.createElement("div");
-            function extractNodes(source: Node) {
+            function extractNodes(source: Node, parent: HTMLElement) {
               for (const node of Array.from(source.childNodes)) {
                 if (node.nodeType === Node.TEXT_NODE) {
-                  clean.appendChild(node.cloneNode());
+                  parent.appendChild(node.cloneNode());
                 } else if (node.nodeType === Node.ELEMENT_NODE) {
                   const el = node as HTMLElement;
                   if (el.tagName === "IMG") {
@@ -1791,16 +2228,20 @@ const RichCommentInput = forwardRef<
                     img.alt = el.getAttribute("alt") || "";
                     img.className = "max-w-full rounded-lg my-1 inline-block";
                     img.contentEditable = "false";
-                    clean.appendChild(img);
+                    parent.appendChild(img);
                   } else if (el.tagName === "BR") {
-                    clean.appendChild(document.createElement("br"));
+                    parent.appendChild(document.createElement("br"));
+                  } else if (FORMATTING_TAGS.has(el.tagName) || el.tagName === "UL" || el.tagName === "OL" || el.tagName === "LI") {
+                    const wrapper = document.createElement(el.tagName.toLowerCase());
+                    extractNodes(el, wrapper);
+                    parent.appendChild(wrapper);
                   } else {
-                    extractNodes(el);
+                    extractNodes(el, parent);
                   }
                 }
               }
             }
-            extractNodes(temp);
+            extractNodes(temp, clean);
             const sel = window.getSelection();
             if (sel && sel.rangeCount > 0) {
               const range = sel.getRangeAt(0);

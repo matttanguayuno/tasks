@@ -1,13 +1,15 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { Sidebar } from "@/components/Sidebar";
 import { ProjectView } from "@/components/ProjectView";
 import { SearchResults } from "@/components/SearchResults";
 import { Dashboard } from "@/components/Dashboard";
+import BoardView from "@/components/BoardView";
 import { api } from "@/lib/api";
 import { useUndoRedo } from "@/hooks/useUndoRedo";
-import type { ProjectSummary, ProjectWithSections } from "@/lib/types";
+import type { ProjectSummary, ProjectWithSections, Sprint, TaskWithRelations } from "@/lib/types";
+import { TaskDetail } from "@/components/TaskDetail";
 
 export default function Home() {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
@@ -18,8 +20,14 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState("");
   const collapseAllRef = useRef<(() => void) | null>(null);
   const [filterHighPriority, setFilterHighPriority] = useState(false);
+  const [hideCompleted, setHideCompleted] = useState(false);
   const [loading, setLoading] = useState(true);
   const searchRef = useRef<HTMLInputElement>(null);
+  const [viewMode, setViewMode] = useState<"list" | "board">("list");
+  const [sprints, setSprints] = useState<Sprint[]>([]);
+  const [boardSelectedTaskId, setBoardSelectedTaskId] = useState<string | null>(null);
+  const [boardSelectedTask, setBoardSelectedTask] = useState<TaskWithRelations | null>(null);
+  const [boardRefreshKey, setBoardRefreshKey] = useState(0);
 
   const loadProjects = useCallback(async () => {
     const data = await api.projects.list();
@@ -39,17 +47,52 @@ export default function Home() {
   useEffect(() => {
     if (activeProjectId) {
       loadProject(activeProjectId);
+      // Load sprints for the active project
+      api.sprints.list(activeProjectId).then((data) => setSprints(data as Sprint[])).catch(() => setSprints([]));
     } else {
       setActiveProject(null);
+      setSprints([]);
+      setViewMode("list");
     }
   }, [activeProjectId, loadProject]);
+
+  // Load full task for board detail panel
+  useEffect(() => {
+    if (boardSelectedTaskId) {
+      api.tasks.get(boardSelectedTaskId).then((t) => setBoardSelectedTask(t as TaskWithRelations)).catch(() => setBoardSelectedTask(null));
+    } else {
+      setBoardSelectedTask(null);
+    }
+  }, [boardSelectedTaskId]);
 
   const refreshProject = useCallback(() => {
     if (activeProjectId) {
       loadProject(activeProjectId);
+      api.sprints.list(activeProjectId).then((data) => setSprints(data as Sprint[])).catch(() => setSprints([]));
     }
     loadProjects();
   }, [activeProjectId, loadProject, loadProjects]);
+
+  // Poll Trello for changes on any synced sprint every 15s (works in both list and board view)
+  useEffect(() => {
+    const syncedSprint = sprints.find((s) => s.trelloBoardId);
+    if (!syncedSprint) return;
+    const interval = setInterval(async () => {
+      try {
+        const result = await api.trello.poll(syncedSprint.id);
+        if (result?.changes && result.changes.length > 0) {
+          refreshProject();
+          // Also refresh the board task detail if open
+          if (boardSelectedTaskId) {
+            api.tasks.get(boardSelectedTaskId).then((t) => setBoardSelectedTask(t as TaskWithRelations)).catch(() => {});
+          }
+        }
+      } catch {
+        // Silently ignore poll errors
+      }
+    }, 15_000);
+    return () => clearInterval(interval);
+  }, [sprints, refreshProject, boardSelectedTaskId]);
 
   const { pushAction, undo, redo, canUndo, canRedo, clear: clearUndoHistory } = useUndoRedo(refreshProject);
 
@@ -127,6 +170,22 @@ export default function Home() {
 
   const isSearching = searchQuery.trim().length > 0;
 
+  const projectProgress = useMemo(() => {
+    if (!activeProject) return null;
+    let total = 0;
+    let completed = 0;
+    const countTasks = (tasks: { completed: boolean; subtasks: { completed: boolean; subtasks: any[] }[] }[]) => {
+      for (const t of tasks) {
+        total++;
+        if (t.completed) completed++;
+        if (t.subtasks?.length) countTasks(t.subtasks);
+      }
+    };
+    for (const s of activeProject.sections) countTasks(s.tasks);
+    const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+    return { total, completed, pct };
+  }, [activeProject]);
+
   return (
     <div className="flex h-screen bg-white">
       <Sidebar
@@ -135,6 +194,7 @@ export default function Home() {
         onSelectProject={(id) => {
           setActiveProjectId(id);
           setSearchQuery("");
+          setViewMode("list");
         }}
         onProjectsChange={loadProjects}
         onReorderProjects={setProjects}
@@ -147,7 +207,7 @@ export default function Home() {
         <header className="h-14 border-b border-gray-300 flex items-center px-4 gap-3 shrink-0 bg-gray-200">
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
-            className={`p-2 hover:bg-gray-300 rounded-lg ${sidebarOpen ? "lg:hidden" : ""}`}
+            className={`p-2 hover:bg-gray-300 rounded-lg lg:hidden`}
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
@@ -179,6 +239,9 @@ export default function Home() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 10l-5-5M21 10l-5 5M21 10H8a5 5 0 000 10h3" />
                   </svg>
                 </button>
+
+                <div className="w-px h-4 bg-gray-400/50 mx-1.5" />
+
                 <button
                   onClick={() => collapseAllRef.current?.()}
                   className="p-1 rounded hover:bg-gray-300 text-gray-500 transition-colors"
@@ -188,6 +251,9 @@ export default function Home() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4h16M8 10l4 4 4-4M4 20h16M8 14l4-4 4 4" />
                   </svg>
                 </button>
+
+                <div className="w-px h-4 bg-gray-400/50 mx-1.5" />
+
                 <button
                   onClick={() => setFilterHighPriority((v) => !v)}
                   className={`px-2 py-0.5 rounded text-xs font-bold transition-colors ${
@@ -199,7 +265,71 @@ export default function Home() {
                 >
                   High
                 </button>
+                <button
+                  onClick={() => setHideCompleted((v) => !v)}
+                  className={`p-1 rounded transition-colors ${hideCompleted ? "bg-green-100 text-green-600 hover:bg-green-200" : "text-gray-500 hover:bg-gray-300"}`}
+                  title={hideCompleted ? "Show completed tasks" : "Hide completed tasks"}
+                >
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    {hideCompleted && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4l16 16" />}
+                  </svg>
+                </button>
+
+                {projectProgress && projectProgress.total > 0 && (
+                  <>
+                  <div className="w-px h-4 bg-gray-400/50 mx-1.5" />
+                  <div className="flex items-center gap-2" title={`${projectProgress.completed} of ${projectProgress.total} tasks completed`}>
+                    <div className="w-24 h-2 bg-gray-300 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-green-500 rounded-full transition-all duration-300"
+                        style={{ width: `${projectProgress.pct}%` }}
+                      />
+                    </div>
+                    <span className="text-xs text-gray-500 tabular-nums">{projectProgress.pct}%</span>
+                  </div>
+                  </>
+                )}
               </div>
+            </div>
+          )}
+
+          {/* Sprint / Board toggle buttons */}
+          {!isSearching && activeProject && (
+            <div className="flex items-center gap-1 ml-2">
+              <div className="w-px h-4 bg-gray-400/50 mx-1" />
+              {viewMode === "board" ? (
+                <button
+                  onClick={() => setViewMode("list")}
+                  className="px-2 py-1 rounded text-xs font-medium bg-gray-300 text-gray-700 hover:bg-gray-400/70 transition-colors"
+                  title="Switch to list view"
+                >
+                  ☰ Tasks
+                </button>
+              ) : sprints.length > 0 ? (
+                <button
+                  onClick={() => setViewMode("board")}
+                  className="px-2 py-1 rounded text-xs font-medium text-gray-500 hover:bg-gray-300 transition-colors"
+                  title="Switch to board view"
+                >
+                  ▦ Sprints
+                </button>
+              ) : (
+                <button
+                  onClick={async () => {
+                    if (activeProjectId) {
+                      await api.sprints.create(activeProjectId);
+                      const data = await api.sprints.list(activeProjectId);
+                      setSprints(data as Sprint[]);
+                      setViewMode("board");
+                    }
+                  }}
+                  className="px-2 py-1 rounded text-xs font-medium text-gray-500 hover:bg-gray-300 transition-colors"
+                  title="Create first sprint and open board view"
+                >
+                  + Add Sprint
+                </button>
+              )}
             </div>
           )}
 
@@ -234,8 +364,42 @@ export default function Home() {
             <div className="flex items-center justify-center h-full text-gray-400">Loading...</div>
           ) : !activeProject ? (
             <Dashboard onSelectProject={(id, taskId) => { setActiveProjectId(id); setPendingTaskId(taskId ?? null); setSearchQuery(""); }} />
+          ) : viewMode === "board" ? (
+            <div className="flex h-full overflow-hidden">
+              <div className="flex-1 overflow-hidden">
+                <BoardView
+                  projectId={activeProject.id}
+                  projectName={activeProject.name}
+                  sprintDuration={activeProject.sprintDuration}
+                  sprintStartDay={activeProject.sprintStartDay}
+                  onSelectTask={(task) => setBoardSelectedTaskId(task.id)}
+                  selectedTaskId={boardSelectedTaskId}
+                  onRefresh={refreshProject}
+                  refreshKey={boardRefreshKey}
+                />
+              </div>
+              {boardSelectedTask && (
+                <TaskDetail
+                  task={boardSelectedTask}
+                  projectId={activeProject.id}
+                  onClose={() => { setBoardSelectedTaskId(null); setBoardSelectedTask(null); }}
+                  onRefresh={() => {
+                    if (boardSelectedTaskId) {
+                      api.tasks.get(boardSelectedTaskId).then((t) => setBoardSelectedTask(t as TaskWithRelations)).catch(() => {});
+                    }
+                    setBoardRefreshKey((k) => k + 1);
+                    refreshProject();
+                  }}
+                  onSelectTask={async (taskId) => {
+                    setBoardSelectedTaskId(taskId);
+                    const full = await api.tasks.get(taskId);
+                    setBoardSelectedTask(full as TaskWithRelations);
+                  }}
+                />
+              )}
+            </div>
           ) : (
-            <ProjectView project={activeProject} onRefresh={refreshProject} pushAction={pushAction} initialTaskId={pendingTaskId} onInitialTaskConsumed={() => setPendingTaskId(null)} collapseAllRef={collapseAllRef} filterHighPriority={filterHighPriority} />
+            <ProjectView project={activeProject} onRefresh={refreshProject} pushAction={pushAction} initialTaskId={pendingTaskId} onInitialTaskConsumed={() => setPendingTaskId(null)} collapseAllRef={collapseAllRef} filterHighPriority={filterHighPriority} hideCompleted={hideCompleted} />
           )}
         </div>
       </main>

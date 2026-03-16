@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
+import { syncCommentToCards, fireAndForget } from "@/lib/trello";
 
 export async function GET(
   _request: NextRequest,
@@ -25,5 +26,8 @@ export async function POST(
       taskId,
     },
   });
+
+  fireAndForget(() => syncCommentToCards(taskId, comment.id, body.content));
+
   return NextResponse.json(comment, { status: 201 });
 }

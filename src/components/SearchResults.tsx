@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { api } from "@/lib/api";
+import { LinkifiedText } from "./LinkifiedText";
 
 interface SearchResult {
   id: string;
@@ -98,7 +99,7 @@ export function SearchResults({ query, onSelectTask }: SearchResultsProps) {
 
               <div className="flex-1 min-w-0">
                 <p className={`text-sm font-medium ${task.completed ? "line-through text-gray-400" : "text-gray-900"}`}>
-                  {task.title}
+                  <LinkifiedText text={task.title} interactive={false} />
                 </p>
                 {task.section?.project && (
                   <div className="flex items-center gap-1.5 mt-1">

@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { writeFile, mkdir } from "fs/promises";
 import path from "path";
+import { syncAttachmentsToCard, fireAndForget } from "@/lib/trello";
 
 const UPLOADS_DIR = path.join(process.cwd(), "uploads");
 
@@ -22,6 +23,29 @@ export async function POST(
   { params }: { params: Promise<{ taskId: string }> }
 ) {
   const { taskId } = await params;
+  const contentType = request.headers.get("content-type") || "";
+
+  // JSON body = link attachment
+  if (contentType.includes("application/json")) {
+    const body = await request.json();
+    if (!body.url) {
+      return NextResponse.json({ error: "URL required" }, { status: 400 });
+    }
+    const name = body.name || new URL(body.url).hostname;
+    const attachment = await prisma.attachment.create({
+      data: {
+        filename: name,
+        url: body.url,
+        size: 0,
+        mimeType: "text/x-uri",
+        taskId,
+      },
+    });
+    fireAndForget(() => syncAttachmentsToCard(taskId));
+    return NextResponse.json(attachment, { status: 201 });
+  }
+
+  // FormData = file upload
   const formData = await request.formData();
   const file = formData.get("file") as File;
   if (!file) {

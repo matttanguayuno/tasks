@@ -7,6 +7,8 @@ function buildDeepSubtasks(depth: number): any {
       orderBy: { order: "asc" },
       include: {
         tags: { include: { tag: true } },
+        assignees: true,
+        sprintTasks: { include: { sprint: { select: { number: true, status: true } } } },
         _count: { select: { comments: true, attachments: true, subtasks: true } },
       },
     };
@@ -16,6 +18,8 @@ function buildDeepSubtasks(depth: number): any {
     include: {
       subtasks: buildDeepSubtasks(depth - 1),
       tags: { include: { tag: true } },
+      assignees: true,
+      sprintTasks: { include: { sprint: { select: { number: true, status: true } } } },
       _count: { select: { comments: true, attachments: true, subtasks: true } },
     },
   };
@@ -25,5 +29,7 @@ function buildDeepSubtasks(depth: number): any {
 export const taskListInclude = {
   subtasks: buildDeepSubtasks(5),
   tags: { include: { tag: true } },
+  assignees: true,
+  sprintTasks: { include: { sprint: { select: { number: true, status: true } } } },
   _count: { select: { comments: true, attachments: true, subtasks: true } },
 };

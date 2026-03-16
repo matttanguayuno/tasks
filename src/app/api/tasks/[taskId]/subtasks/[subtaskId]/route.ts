@@ -1,11 +1,12 @@
 import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
+import { syncChecklistToTrello, fireAndForget } from "@/lib/trello";
 
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ taskId: string; subtaskId: string }> }
 ) {
-  const { subtaskId } = await params;
+  const { taskId, subtaskId } = await params;
   const body = await request.json();
   const data: Record<string, unknown> = {};
   if (body.title !== undefined) data.title = body.title;
@@ -19,6 +20,7 @@ export async function PATCH(
     where: { id: subtaskId },
     data,
   });
+  fireAndForget(() => syncChecklistToTrello(taskId));
   return NextResponse.json(subtask);
 }
 
@@ -26,7 +28,8 @@ export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ taskId: string; subtaskId: string }> }
 ) {
-  const { subtaskId } = await params;
+  const { taskId, subtaskId } = await params;
   await prisma.task.delete({ where: { id: subtaskId } });
+  fireAndForget(() => syncChecklistToTrello(taskId));
   return NextResponse.json({ success: true });
 }

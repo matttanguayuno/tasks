@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import type { TaskWithRelations } from "@/lib/types";
 import { LinkifiedText, LinkPopup } from "./LinkifiedText";
+import { AssigneeInitials } from "./AssigneeInput";
 
 const PRIORITY_COLORS: Record<string, string> = {
   HIGH: "text-red-500",
@@ -261,6 +262,14 @@ export function TaskRow({ task, isSelected, isMultiSelected, onSelect, onToggleC
               interactive={isSelected}
             />
           )}
+          {(task.sprintTasks ?? []).filter((st) => st.sprint.status === "ACTIVE").map((st) => (
+            <span
+              key={st.sprint.number}
+              className="ml-1.5 text-[10px] font-medium text-indigo-600 bg-indigo-100 px-1.5 py-0.5 rounded-full whitespace-nowrap"
+            >
+              S{st.sprint.number}
+            </span>
+          ))}
           {task.inProgress && !task.completed && (
             <span className="ml-1.5 text-[10px] font-medium text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded-full whitespace-nowrap">
               In Progress
@@ -310,7 +319,17 @@ export function TaskRow({ task, isSelected, isMultiSelected, onSelect, onToggleC
             {task.requestedBy || "—"}
           </span>
         )}
-
+        {/* Assignee initials */}
+        {task.assignees && task.assignees.length > 0 && (
+          <div className="flex items-center gap-0.5 shrink-0">
+            {task.assignees.slice(0, 3).map((a) => (
+              <AssigneeInitials key={a.id} name={a.name} size="sm" />
+            ))}
+            {task.assignees.length > 3 && (
+              <span className="text-[9px] text-gray-400">+{task.assignees.length - 3}</span>
+            )}
+          </div>
+        )}
         {/* Comment count */}
         {task._count?.comments > 0 && (
           <span className="text-xs text-gray-400 flex items-center gap-0.5 self-center">

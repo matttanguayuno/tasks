@@ -8,3 +8,26 @@ body {
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
+
+/* Rich-text editor and display list styles */
+[contenteditable] ul,
+.rich-text-content ul {
+  list-style-type: disc;
+  margin-left: 1.25rem;
+  margin-top: 0.25rem;
+  margin-bottom: 0.25rem;
+}
+
+[contenteditable] ol,
+.rich-text-content ol {
+  list-style-type: decimal;
+  margin-left: 1.25rem;
+  margin-top: 0.25rem;
+  margin-bottom: 0.25rem;
+}
+
+[contenteditable] li,
+.rich-text-content li {
+  margin-top: 0.125rem;
+  margin-bottom: 0.125rem;
+}

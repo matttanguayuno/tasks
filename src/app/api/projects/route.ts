@@ -1,8 +1,11 @@
 import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const { searchParams } = new URL(request.url);
+  const includeArchived = searchParams.get("archived") === "true";
   const projects = await prisma.project.findMany({
+    where: includeArchived ? { archived: true } : { archived: false },
     orderBy: { order: "asc" },
     include: { _count: { select: { sections: true } } },
   });

@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { taskListInclude } from "@/lib/prisma-includes";
 import { NextRequest, NextResponse } from "next/server";
+import { syncTaskToCards, fireAndForget } from "@/lib/trello";
 
 export async function GET(
   _request: NextRequest,
@@ -31,7 +32,17 @@ export async function PATCH(
   const data: Record<string, unknown> = {};
   if (body.title !== undefined) data.title = body.title;
   if (body.description !== undefined) data.description = body.description;
-  if (body.dueDate !== undefined) data.dueDate = body.dueDate ? new Date(body.dueDate) : null;
+  if (body.dueDate !== undefined) {
+    // Store as noon UTC so it displays the correct calendar day in any timezone
+    if (body.dueDate) {
+      const dateStr = typeof body.dueDate === "string" && body.dueDate.length === 10
+        ? body.dueDate  // "YYYY-MM-DD"
+        : new Date(body.dueDate).toISOString().slice(0, 10);
+      data.dueDate = new Date(`${dateStr}T12:00:00.000Z`);
+    } else {
+      data.dueDate = null;
+    }
+  }
   if (body.priority !== undefined) data.priority = body.priority;
   if (body.requestedBy !== undefined) data.requestedBy = body.requestedBy || null;
   if (body.order !== undefined) data.order = body.order;
@@ -51,6 +62,9 @@ export async function PATCH(
       data,
       include: taskListInclude as Record<string, unknown>,
     });
+
+    fireAndForget(() => syncTaskToCards(taskId));
+
     return NextResponse.json(task);
   } catch (err) {
     console.error("PATCH /api/tasks/[taskId] error:", err);

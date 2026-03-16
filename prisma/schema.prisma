@@ -8,16 +8,22 @@ datasource db {
 }
 
 model Project {
-  id          String        @id @default(cuid())
-  name        String
-  description String        @default("")
-  color       String        @default("#6366f1")
-  icon        String        @default("folder")
-  order       Int           @default(0)
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
-  sections    Section[]
-  links       ProjectLink[]
+  id              String        @id @default(cuid())
+  name            String
+  description     String        @default("")
+  color           String        @default("#6366f1")
+  icon            String        @default("folder")
+  order           Int           @default(0)
+  archived        Boolean       @default(false)
+  sprintDuration  Int           @default(7)
+  sprintStartDay  Int           @default(1) // ISO day-of-week: 1=Monday
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  sections        Section[]
+  links           ProjectLink[]
+  attachments     ProjectAttachment[]
+  sprints         Sprint[]
+  boardColumns    BoardColumn[]
 }
 
 model ProjectLink {
@@ -35,6 +41,7 @@ model ProjectLink {
 model Section {
   id        String   @id @default(cuid())
   name      String
+  notes     String   @default("")
   order     Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -57,6 +64,7 @@ model Task {
   completedAt DateTime?
   inProgress  Boolean      @default(false)
   hyperlink   String?
+  trelloCheckItemId String?  // Trello checklist item ID (for subtasks synced as checklist items)
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
   sectionId   String
@@ -67,6 +75,8 @@ model Task {
   tags        TaskTag[]
   comments    Comment[]
   attachments Attachment[]
+  sprintTasks SprintTask[]
+  assignees   TaskAssignee[]
 
   @@index([sectionId])
   @@index([parentId])
@@ -90,12 +100,13 @@ model TaskTag {
 }
 
 model Comment {
-  id        String   @id @default(cuid())
-  content   String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  taskId    String
-  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  id               String   @id @default(cuid())
+  content          String
+  trelloCommentId  String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  taskId           String
+  task             Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
 
   @@index([taskId])
 }
@@ -106,6 +117,79 @@ model Attachment {
   url       String
   size      Int
   mimeType  String
+  createdAt DateTime @default(now())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+}
+
+model ProjectAttachment {
+  id        String   @id @default(cuid())
+  filename  String
+  url       String
+  size      Int
+  mimeType  String
+  createdAt DateTime @default(now())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+}
+
+model BoardColumn {
+  id          String       @id @default(cuid())
+  name        String
+  order       Int          @default(0)
+  trelloListId String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  projectId   String
+  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sprintTasks SprintTask[]
+
+  @@index([projectId])
+}
+
+model Sprint {
+  id          String       @id @default(cuid())
+  number      Int
+  startDate   DateTime
+  endDate     DateTime
+  status      String       @default("ACTIVE") // ACTIVE, CLOSED
+  trelloBoardId String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  projectId   String
+  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sprintTasks SprintTask[]
+
+  @@unique([projectId, number])
+  @@index([projectId])
+}
+
+model SprintTask {
+  id        String      @id @default(cuid())
+  order     Int         @default(0)
+  trelloCardId String?
+  trelloChecklistId String? // Trello checklist ID on this card (for subtask sync)
+  createdAt DateTime    @default(now())
+  sprintId  String
+  sprint    Sprint      @relation(fields: [sprintId], references: [id], onDelete: Cascade)
+  taskId    String
+  task      Task        @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  columnId  String
+  column    BoardColumn @relation(fields: [columnId], references: [id], onDelete: Cascade)
+
+  @@unique([sprintId, taskId])
+  @@index([sprintId])
+  @@index([taskId])
+  @@index([columnId])
+}
+
+model TaskAssignee {
+  id        String   @id @default(cuid())
+  name      String
   createdAt DateTime @default(now())
   taskId    String
   task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)

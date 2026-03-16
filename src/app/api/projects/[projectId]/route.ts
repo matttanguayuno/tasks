@@ -23,6 +23,9 @@ export async function GET(
       links: {
         orderBy: { order: "asc" },
       },
+      attachments: {
+        orderBy: { createdAt: "desc" },
+      },
     },
   });
   if (!project) {
@@ -45,6 +48,9 @@ export async function PATCH(
       ...(body.color !== undefined && { color: body.color }),
       ...(body.icon !== undefined && { icon: body.icon }),
       ...(body.order !== undefined && { order: body.order }),
+      ...(body.sprintDuration !== undefined && { sprintDuration: body.sprintDuration }),
+      ...(body.sprintStartDay !== undefined && { sprintStartDay: body.sprintStartDay }),
+      ...(body.archived !== undefined && { archived: body.archived }),
     },
   });
   return NextResponse.json(project);

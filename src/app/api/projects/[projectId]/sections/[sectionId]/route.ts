@@ -12,6 +12,7 @@ export async function PATCH(
     data: {
       ...(body.name !== undefined && { name: body.name }),
       ...(body.order !== undefined && { order: body.order }),
+      ...(body.notes !== undefined && { notes: body.notes }),
     },
   });
   return NextResponse.json(section);

@@ -6,6 +6,13 @@ export interface TaskTag {
   tag: Tag;
 }
 
+export interface TaskAssignee {
+  id: string;
+  name: string;
+  taskId: string;
+  createdAt: string;
+}
+
 export interface TaskWithRelations {
   id: string;
   title: string;
@@ -26,12 +33,15 @@ export interface TaskWithRelations {
   tags: TaskTag[];
   comments?: Comment[];
   attachments?: Attachment[];
+  assignees: TaskAssignee[];
+  sprintTasks?: { sprint: { number: number; status: string } }[];
   _count: { comments: number; attachments: number; subtasks: number };
 }
 
 export interface SectionWithTasks {
   id: string;
   name: string;
+  notes: string;
   order: number;
   projectId: string;
   createdAt: string;
@@ -55,10 +65,23 @@ export interface ProjectWithSections {
   color: string;
   icon: string;
   order: number;
+  sprintDuration: number;
+  sprintStartDay: number;
   createdAt: string;
   updatedAt: string;
   sections: SectionWithTasks[];
   links: ProjectLink[];
+  attachments: ProjectAttachment[];
+}
+
+export interface ProjectAttachment {
+  id: string;
+  filename: string;
+  url: string;
+  size: number;
+  mimeType: string;
+  createdAt: string;
+  projectId: string;
 }
 
 export interface ProjectSummary {
@@ -67,5 +90,42 @@ export interface ProjectSummary {
   color: string;
   icon: string;
   order: number;
+  archived: boolean;
   _count: { sections: number };
+}
+
+export interface BoardColumn {
+  id: string;
+  name: string;
+  order: number;
+  projectId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Sprint {
+  id: string;
+  number: number;
+  startDate: string;
+  endDate: string;
+  status: string;
+  projectId: string;
+  trelloBoardId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SprintTask {
+  id: string;
+  order: number;
+  sprintId: string;
+  taskId: string;
+  columnId: string;
+  createdAt: string;
+  task: TaskWithRelations;
+  column: BoardColumn;
+}
+
+export interface SprintWithTasks extends Sprint {
+  sprintTasks: SprintTask[];
 }

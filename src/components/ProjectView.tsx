@@ -39,8 +39,10 @@ import {
 import { api } from "@/lib/api";
 import { TaskRow } from "./TaskRow";
 import { TaskDetail } from "./TaskDetail";
+import MultiTaskDetail from "./MultiTaskDetail";
 import { ProjectDetail } from "./ProjectDetail";
-import type { ProjectWithSections, TaskWithRelations, SectionWithTasks } from "@/lib/types";
+import SectionDetail from "./SectionDetail";
+import type { ProjectWithSections, TaskWithRelations, SectionWithTasks, Sprint } from "@/lib/types";
 import type { UndoAction } from "@/hooks/useUndoRedo";
 
 /* ──── Task tree helpers ──── */
@@ -126,16 +128,24 @@ interface ProjectViewProps {
   onInitialTaskConsumed?: () => void;
   collapseAllRef?: React.MutableRefObject<(() => void) | null>;
   filterHighPriority?: boolean;
+  hideCompleted?: boolean;
 }
 
-export function ProjectView({ project, onRefresh, pushAction, initialTaskId, onInitialTaskConsumed, collapseAllRef, filterHighPriority }: ProjectViewProps) {
+export function ProjectView({ project, onRefresh, pushAction, initialTaskId, onInitialTaskConsumed, collapseAllRef, filterHighPriority, hideCompleted }: ProjectViewProps) {
   const [selectedTask, setSelectedTask] = useState<TaskWithRelations | null>(null);
+  const [panelCollapsed, setPanelCollapsed] = useState(false);
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
   const lastClickedTaskIdRef = useRef<string | null>(null);
   const [addingSection, setAddingSection] = useState(false);
   const [addingSectionAtTop, setAddingSectionAtTop] = useState(false);
   const [newSectionName, setNewSectionName] = useState("");
-  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem(`collapsedSections-${project.id}`);
+      if (saved) return new Set(JSON.parse(saved) as string[]);
+    } catch { /* ignore */ }
+    return new Set();
+  });
   const [addingTaskInSection, setAddingTaskInSection] = useState<string | null>(null);
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
@@ -156,6 +166,8 @@ export function ProjectView({ project, onRefresh, pushAction, initialTaskId, onI
   const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
   const [editSectionName, setEditSectionName] = useState("");
   const [hyperlinkDialog, setHyperlinkDialog] = useState<{ taskId: string; url: string } | null>(null);
+  const [sprintMenuOpen, setSprintMenuOpen] = useState(false);
+  const [sprintList, setSprintList] = useState<Sprint[]>([]);
   const subtaskDropTargetRef = useRef<string | null>(null);
   const [subtaskDropTargetId, setSubtaskDropTargetId] = useState<string | null>(null);
   const [dragIntent, setDragIntent] = useState<DragIntent>(null);
@@ -189,6 +201,7 @@ export function ProjectView({ project, onRefresh, pushAction, initialTaskId, onI
   useEffect(() => {
     selectingTaskIdRef.current = null;
     setSelectedTask(null);
+    setPanelCollapsed(false);
     setSelectedTaskIds(new Set());
     requestAnimationFrame(() => {
       scrollContainerRef.current?.scrollTo(0, 0);
@@ -227,11 +240,17 @@ export function ProjectView({ project, onRefresh, pushAction, initialTaskId, onI
       if (task) {
         selectingTaskIdRef.current = task.id;
         setSelectedTask(task);
+        setPanelCollapsed(false);
         setSelectedTaskIds(new Set());
       }
       onInitialTaskConsumed?.();
     }
   }, [initialTaskId, allTasks.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Persist collapsed sections to localStorage
+  useEffect(() => {
+    localStorage.setItem(`collapsedSections-${project.id}`, JSON.stringify([...collapsedSections]));
+  }, [collapsedSections, project.id]);
 
   // Expose collapseAll to parent
   useEffect(() => {
@@ -916,6 +935,7 @@ export function ProjectView({ project, onRefresh, pushAction, initialTaskId, onI
 
   const handleSelectTask = async (task: TaskWithRelations) => {
     selectingTaskIdRef.current = task.id;
+    setPanelCollapsed(false);
     const full = await api.tasks.get(task.id);
     // Only apply if user hasn't navigated to a different task in the meantime
     if (selectingTaskIdRef.current === task.id) {
@@ -1313,6 +1333,49 @@ export function ProjectView({ project, onRefresh, pushAction, initialTaskId, onI
               </svg>
               Hyperlink
             </button>
+
+            {/* Add to Sprint submenu */}
+            <button
+              onClick={async () => {
+                const sprints = (await api.sprints.list(project.id)) as Sprint[];
+                setSprintList(sprints.filter((s) => s.status === "ACTIVE"));
+                setSprintMenuOpen(!sprintMenuOpen);
+              }}
+              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+              </svg>
+              Add to Sprint ›
+            </button>
+            {sprintMenuOpen && sprintList.length > 0 && (
+              <div className="ml-4 border-t border-gray-100">
+                {sprintList.map((sprint) => (
+                  <button
+                    key={sprint.id}
+                    onClick={async () => {
+                      const taskIds = selectedTaskIds.size > 0
+                        ? Array.from(selectedTaskIds)
+                        : [contextMenu.task.id];
+                      await api.sprints.addTasks(project.id, sprint.id, taskIds);
+                      setContextMenu(null);
+                      setSprintMenuOpen(false);
+                      setSelectedTaskIds(new Set());
+                      onRefresh();
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                  >
+                    Sprint {sprint.number}
+                  </button>
+                ))}
+              </div>
+            )}
+            {sprintMenuOpen && sprintList.length === 0 && (
+              <div className="ml-4 px-3 py-1.5 text-xs text-gray-400 border-t border-gray-100">
+                No active sprints
+              </div>
+            )}
+
             <div className="border-t border-gray-100 my-1" />
             <button
               onClick={() => {
@@ -1711,6 +1774,7 @@ export function ProjectView({ project, onRefresh, pushAction, initialTaskId, onI
               const filteredTasks = section.tasks.filter((t) => {
                 if (clipboard?.mode === "cut" && clipboard.task.id === t.id) return false;
                 if (filterHighPriority && t.priority !== "HIGH" && !t.subtasks.some((s) => s.priority === "HIGH")) return false;
+                if (hideCompleted && t.completed) return false;
                 return true;
               });
               const flatList = flattenTasks(filteredTasks, expandedTasks);
@@ -2068,11 +2132,25 @@ export function ProjectView({ project, onRefresh, pushAction, initialTaskId, onI
         </div>
       )}
 
+      {/* Multi-select detail panel */}
+      {selectedTaskIds.size > 0 && (() => {
+        const selectedTasks = allTasks.filter((t) => selectedTaskIds.has(t.id));
+        if (selectedTasks.length === 0) return null;
+        return (
+          <MultiTaskDetail
+            tasks={selectedTasks}
+            projectId={project.id}
+            onClose={clearMultiSelect}
+            onRefresh={onRefresh}
+          />
+        );
+      })()}
       {/* Task detail panel */}
-      {selectedTask && (
+      {selectedTaskIds.size === 0 && selectedTask && (
         <TaskDetail
           task={selectedTask}
-          onClose={() => { selectingTaskIdRef.current = null; setSelectedTask(null); }}
+          projectId={project.id}
+          onClose={() => { selectingTaskIdRef.current = null; setSelectedTask(null); setPanelCollapsed(true); }}
           onRefresh={() => {
             refreshSelectedTask();
             onRefresh();
@@ -2081,6 +2159,7 @@ export function ProjectView({ project, onRefresh, pushAction, initialTaskId, onI
           pushAction={pushAction}
           onSelectTask={async (taskId) => {
             selectingTaskIdRef.current = taskId;
+            setPanelCollapsed(false);
             const full = await api.tasks.get(taskId);
             if (selectingTaskIdRef.current === taskId) {
               setSelectedTask(full as TaskWithRelations);
@@ -2088,12 +2167,40 @@ export function ProjectView({ project, onRefresh, pushAction, initialTaskId, onI
           }}
         />
       )}
-      {/* Project detail panel (shown when no task selected) */}
-      {!selectedTask && (
+      {/* Section detail panel */}
+      {selectedTaskIds.size === 0 && !selectedTask && selectedSectionId && (() => {
+        const section = sections.find((s) => s.id === selectedSectionId);
+        if (!section) return null;
+        return (
+          <SectionDetail
+            section={section}
+            projectId={project.id}
+            onClose={() => { setSelectedSectionId(null); setPanelCollapsed(true); }}
+            onRefresh={onRefresh}
+          />
+        );
+      })()}
+      {/* Project detail panel (shown when no task/section selected and panel not collapsed) */}
+      {selectedTaskIds.size === 0 && !selectedTask && !selectedSectionId && !panelCollapsed && (
         <ProjectDetail
           project={project}
           onRefresh={onRefresh}
+          onClose={() => setPanelCollapsed(true)}
         />
+      )}
+      {/* Collapsed panel expand button */}
+      {selectedTaskIds.size === 0 && !selectedTask && !selectedSectionId && panelCollapsed && (
+        <div className="border-l border-gray-200 bg-gray-50 flex flex-col items-center py-3 px-1">
+          <button
+            onClick={() => setPanelCollapsed(false)}
+            className="p-1 hover:bg-gray-200 rounded text-gray-400 hover:text-gray-600 transition-colors"
+            title="Show project details"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7M18 19l-7-7 7-7" />
+            </svg>
+          </button>
+        </div>
       )}
       </DndContext>
     </div>

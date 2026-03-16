@@ -6,7 +6,7 @@ import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } 
 import { CSS } from "@dnd-kit/utilities";
 import { RichDescriptionEditor } from "./TaskDetail";
 import { api } from "@/lib/api";
-import type { ProjectWithSections, ProjectLink } from "@/lib/types";
+import type { ProjectWithSections, ProjectLink, ProjectAttachment } from "@/lib/types";
 
 interface SortableLinkRowProps {
   link: ProjectLink;
@@ -128,9 +128,10 @@ function SortableLinkRow({
 interface ProjectDetailProps {
   project: ProjectWithSections;
   onRefresh: () => void;
+  onClose?: () => void;
 }
 
-export function ProjectDetail({ project, onRefresh }: ProjectDetailProps) {
+export function ProjectDetail({ project, onRefresh, onClose }: ProjectDetailProps) {
   const [description, setDescription] = useState(project.description);
   const [newLinkName, setNewLinkName] = useState("");
   const [newLinkUrl, setNewLinkUrl] = useState("");
@@ -138,6 +139,10 @@ export function ProjectDetail({ project, onRefresh }: ProjectDetailProps) {
   const [editLinkName, setEditLinkName] = useState("");
   const [editLinkUrl, setEditLinkUrl] = useState("");
   const editNameRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const dragCounter = useRef(0);
 
   const [panelWidth, setPanelWidth] = useState(0);
   const resizing = useRef(false);
@@ -254,12 +259,77 @@ export function ProjectDetail({ project, onRefresh }: ProjectDetailProps) {
     onRefresh();
   };
 
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await api.projectAttachments.upload(project.id, file);
+    onRefresh();
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const uploadFiles = useCallback(async (files: FileList | File[]) => {
+    for (const file of Array.from(files)) {
+      await api.projectAttachments.upload(project.id, file);
+    }
+    onRefresh();
+  }, [project.id, onRefresh]);
+
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current++;
+    if (e.dataTransfer.types.includes("Files")) setDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current--;
+    if (dragCounter.current === 0) setDragging(false);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current = 0;
+    setDragging(false);
+    if (e.dataTransfer.files.length > 0) {
+      await uploadFiles(e.dataTransfer.files);
+    }
+  };
+
+  const handleDeleteAttachment = async (attachmentId: string) => {
+    await api.projectAttachments.delete(project.id, attachmentId);
+    setConfirmDelete(null);
+    onRefresh();
+  };
+
   return (
     <div
       ref={panelRef}
       className={`w-full border-l border-gray-200 bg-white flex flex-col overflow-hidden shrink-0 relative ${panelWidth === 0 ? "md:w-[450px] lg:w-[550px] xl:w-[650px]" : ""}`}
       style={panelWidth > 0 ? { width: panelWidth } : undefined}
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
     >
+      {/* Drag overlay */}
+      {dragging && (
+        <div className="absolute inset-0 bg-indigo-50/80 border-2 border-dashed border-indigo-400 z-40 flex items-center justify-center">
+          <div className="text-indigo-600 font-medium flex items-center gap-2">
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+            </svg>
+            Drop files to attach
+          </div>
+        </div>
+      )}
       {/* Resize handle */}
       <div
         onMouseDown={handleResizeStart}
@@ -273,6 +343,18 @@ export function ProjectDetail({ project, onRefresh }: ProjectDetailProps) {
           style={{ backgroundColor: project.color }}
         />
         <h2 className="text-lg font-semibold text-gray-900 truncate">{project.name}</h2>
+        <div className="flex-1" />
+        {onClose && (
+          <button
+            onClick={onClose}
+            className="p-1 hover:bg-gray-100 rounded hidden md:block"
+            title="Close panel"
+          >
+            <svg className="w-5 h-5 text-gray-400 hover:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+            </svg>
+          </button>
+        )}
       </div>
 
       {/* Content */}
@@ -349,7 +431,67 @@ export function ProjectDetail({ project, onRefresh }: ProjectDetailProps) {
             </button>
           </div>
         </div>
+
+        {/* Attachments */}
+        <div>
+          <label className="text-xs text-gray-500 mb-2 block">
+            Attachments {project.attachments && project.attachments.length > 0 && `(${project.attachments.length})`}
+          </label>
+          {project.attachments && project.attachments.length > 0 && (
+            <div className="space-y-1 mb-2">
+              {project.attachments.map((att: ProjectAttachment) => (
+                <div key={att.id} className="flex items-center gap-2 px-2 py-1.5 bg-gray-50 rounded text-sm group">
+                  <svg className="w-4 h-4 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                  </svg>
+                  <a href={att.url} target="_blank" rel="noopener noreferrer" className="flex-1 truncate text-indigo-600 hover:underline">
+                    {att.filename}
+                  </a>
+                  <span className="text-xs text-gray-400">{formatFileSize(att.size)}</span>
+                  <button
+                    onClick={() => setConfirmDelete(att.id)}
+                    className="p-0.5 opacity-0 group-hover:opacity-100 hover:text-red-500 text-gray-400"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="flex items-center gap-1 text-sm text-gray-500 hover:text-indigo-600 transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+            </svg>
+            Attach file
+          </button>
+        </div>
+
+        {/* Delete attachment confirmation */}
+        {confirmDelete && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100]" onClick={() => setConfirmDelete(null)}>
+            <div className="bg-white rounded-lg shadow-lg p-4 max-w-xs" onClick={(e) => e.stopPropagation()}>
+              <h3 className="text-sm font-semibold text-gray-900 mb-1">Delete attachment</h3>
+              <p className="text-sm text-gray-600 mb-3">Are you sure you want to delete this attachment?</p>
+              <div className="flex gap-2 justify-end">
+                <button onClick={() => setConfirmDelete(null)} className="px-3 py-1 text-sm text-gray-600 hover:bg-gray-100 rounded">Cancel</button>
+                <button onClick={() => handleDeleteAttachment(confirmDelete)} className="px-3 py-1 text-sm text-white bg-red-600 rounded hover:bg-red-700">Delete</button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }

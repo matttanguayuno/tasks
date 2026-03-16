@@ -12,7 +12,8 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
 // Projects
 export const api = {
   projects: {
-    list: () => fetchJson<unknown[]>(`${API_BASE}/projects`),
+    list: (opts?: { archived?: boolean }) =>
+      fetchJson<unknown[]>(`${API_BASE}/projects${opts?.archived ? "?archived=true" : ""}`),
     get: (id: string) => fetchJson<unknown>(`${API_BASE}/projects/${id}`),
     create: (data: { name: string; color?: string; icon?: string }) =>
       fetchJson<unknown>(`${API_BASE}/projects`, {
@@ -134,6 +135,12 @@ export const api = {
         body: formData,
       });
     },
+    addLink: (taskId: string, data: { name: string; url: string }) =>
+      fetchJson<unknown>(`${API_BASE}/tasks/${taskId}/attachments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      }),
     delete: (taskId: string, attachmentId: string) =>
       fetchJson<unknown>(`${API_BASE}/tasks/${taskId}/attachments/${attachmentId}`, {
         method: "DELETE",
@@ -159,7 +166,24 @@ export const api = {
       }),
   },
 
-  reorder: (items: { id: string; order: number; sectionId?: string }[], type: string) =>
+  projectAttachments: {
+    list: (projectId: string) =>
+      fetchJson<unknown[]>(`${API_BASE}/projects/${projectId}/attachments`),
+    upload: (projectId: string, file: File) => {
+      const formData = new FormData();
+      formData.append("file", file);
+      return fetchJson<unknown>(`${API_BASE}/projects/${projectId}/attachments`, {
+        method: "POST",
+        body: formData,
+      });
+    },
+    delete: (projectId: string, attachmentId: string) =>
+      fetchJson<unknown>(`${API_BASE}/projects/${projectId}/attachments/${attachmentId}`, {
+        method: "DELETE",
+      }),
+  },
+
+  reorder: (items: { id: string; order: number; sectionId?: string; columnId?: string }[], type: string) =>
     fetchJson<unknown>(`${API_BASE}/reorder`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -169,4 +193,108 @@ export const api = {
   search: (q: string) => fetchJson<unknown[]>(`${API_BASE}/search?q=${encodeURIComponent(q)}`),
 
   requesters: () => fetchJson<string[]>(`${API_BASE}/requesters`),
+
+  assignees: {
+    list: () => fetchJson<string[]>(`${API_BASE}/assignees`),
+    addToTask: (taskId: string, name: string) =>
+      fetchJson<unknown>(`${API_BASE}/tasks/${taskId}/assignees`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      }),
+    removeFromTask: (taskId: string, assigneeId: string) =>
+      fetchJson<unknown>(`${API_BASE}/tasks/${taskId}/assignees?assigneeId=${assigneeId}`, {
+        method: "DELETE",
+      }),
+  },
+
+  boardColumns: {
+    list: (projectId: string) =>
+      fetchJson<unknown[]>(`${API_BASE}/projects/${projectId}/columns`),
+    create: (projectId: string, data: { name: string }) =>
+      fetchJson<unknown>(`${API_BASE}/projects/${projectId}/columns`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      }),
+    update: (projectId: string, columnId: string, data: Record<string, unknown>) =>
+      fetchJson<unknown>(`${API_BASE}/projects/${projectId}/columns/${columnId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      }),
+    delete: (projectId: string, columnId: string) =>
+      fetchJson<unknown>(`${API_BASE}/projects/${projectId}/columns/${columnId}`, {
+        method: "DELETE",
+      }),
+  },
+
+  sprints: {
+    list: (projectId: string) =>
+      fetchJson<unknown[]>(`${API_BASE}/projects/${projectId}/sprints`),
+    get: (projectId: string, sprintId: string) =>
+      fetchJson<unknown>(`${API_BASE}/projects/${projectId}/sprints/${sprintId}`),
+    create: (projectId: string) =>
+      fetchJson<unknown>(`${API_BASE}/projects/${projectId}/sprints`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      }),
+    update: (projectId: string, sprintId: string, data: Record<string, unknown>) =>
+      fetchJson<unknown>(`${API_BASE}/projects/${projectId}/sprints/${sprintId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      }),
+    delete: (projectId: string, sprintId: string) =>
+      fetchJson<unknown>(`${API_BASE}/projects/${projectId}/sprints/${sprintId}`, {
+        method: "DELETE",
+      }),
+    close: (projectId: string, sprintId: string) =>
+      fetchJson<unknown>(`${API_BASE}/projects/${projectId}/sprints/${sprintId}/close`, {
+        method: "POST",
+      }),
+    addTasks: (projectId: string, sprintId: string, taskIds: string[], columnId?: string) =>
+      fetchJson<unknown>(`${API_BASE}/projects/${projectId}/sprints/${sprintId}/tasks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ taskIds, columnId }),
+      }),
+    removeTask: (projectId: string, sprintId: string, taskId: string) =>
+      fetchJson<unknown>(`${API_BASE}/projects/${projectId}/sprints/${sprintId}/tasks?taskId=${taskId}`, {
+        method: "DELETE",
+      }),
+  },
+
+  trello: {
+    status: () => fetchJson<{ configured: boolean }>(`${API_BASE}/trello/poll`),
+    enableSync: (sprintId: string) =>
+      fetchJson<{ success: boolean; boardId: string }>(`${API_BASE}/trello/sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sprintId }),
+      }),
+    disableSync: (sprintId: string) =>
+      fetchJson<{ success: boolean }>(`${API_BASE}/trello/sync`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sprintId }),
+      }),
+    poll: (sprintId: string) =>
+      fetchJson<{
+        configured: boolean;
+        changes: Array<{
+          type: "rename" | "move" | "complete" | "reopen";
+          taskId: string;
+          taskTitle?: string;
+          newTitle?: string;
+          newColumnId?: string;
+          newColumnName?: string;
+        }>;
+      }>(`${API_BASE}/trello/poll`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sprintId }),
+      }),
+  },
 };

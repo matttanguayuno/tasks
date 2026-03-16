@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { api } from "@/lib/api";
+import { LinkifiedText } from "./LinkifiedText";
 
 interface SearchResult {
   id: string;
@@ -105,7 +106,7 @@ export function SearchOverlay({ onClose, onSelectTask }: SearchOverlayProps) {
               </div>
               <div className="flex-1 min-w-0">
                 <div className={`text-sm truncate ${task.completed ? "line-through text-gray-400" : "text-gray-800"}`}>
-                  {task.title}
+                  <LinkifiedText text={task.title} interactive={false} />
                 </div>
                 {task.section?.project && (
                   <div className="text-xs text-gray-400 truncate">

@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useState, useEffect, useCallback } from "react";
+import { LinkifiedText } from "./LinkifiedText";
 
 interface ProjectCard {
   id: string;
@@ -284,7 +285,7 @@ export function Dashboard({ onSelectProject }: DashboardProps) {
                       >
                       <div className="flex-1 min-w-0">
                         <p className={`text-sm truncate ${group.isVirtualParent ? "text-gray-400" : "text-gray-900"}`}>
-                          {group.parentTask.title}
+                          <LinkifiedText text={group.parentTask.title} interactive={false} />
                         </p>
                         {!group.isVirtualParent && parentSection?.project && (
                           <div className="flex items-center gap-1.5 mt-0.5">
@@ -320,7 +321,7 @@ export function Dashboard({ onSelectProject }: DashboardProps) {
                             className="flex-1 flex items-center gap-3 pl-3 text-left cursor-pointer"
                           >
                           <div className="flex-1 min-w-0">
-                            <p className="text-sm text-gray-700 truncate">{child.title}</p>
+                            <p className="text-sm text-gray-700 truncate"><LinkifiedText text={child.title} interactive={false} /></p>
                             {childSection?.project && (
                               <div className="flex items-center gap-1.5 mt-0.5">
                                 <div
