@@ -157,7 +157,7 @@ export default function AssigneeInput({ taskId, assignees, onUpdate }: AssigneeI
         />
 
         {showSuggestions && filtered.length > 0 && (
-          <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-md shadow-lg max-h-32 overflow-y-auto">
+          <div className="absolute z-50 min-w-[200px] w-max mt-1 bg-white border border-gray-200 rounded-md shadow-lg max-h-32 overflow-y-auto">
             {filtered.map((name, i) => (
               <button
                 key={name}

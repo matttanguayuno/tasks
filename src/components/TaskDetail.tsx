@@ -8,6 +8,7 @@ import {
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { api } from "@/lib/api";
 import type { TaskWithRelations, Sprint } from "@/lib/types";
 import type { UndoAction } from "@/hooks/useUndoRedo";
@@ -239,6 +240,7 @@ function SprintSelector({ taskId, projectId, onUpdate }: { taskId: string; proje
 }
 
 export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSelectTask, pushAction }: TaskDetailProps) {
+  const subtaskSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
   const [title, setTitle] = useState(task.title);
   const [editingTitle, setEditingTitle] = useState(false);
   const [description, setDescription] = useState(task.description);
@@ -419,18 +421,32 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
 
   const handleAddSubtask = async () => {
     if (!newSubtaskTitle.trim()) return;
-    await api.tasks.create({ title: newSubtaskTitle.trim(), sectionId: task.sectionId, parentId: task.id });
+    await api.subtasks.create(task.id, { title: newSubtaskTitle.trim() });
     setNewSubtaskTitle("");
     onRefresh();
   };
 
+  const handleSubtaskDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id || !task.subtasks) return;
+    const oldIndex = task.subtasks.findIndex((s) => s.id === active.id);
+    const newIndex = task.subtasks.findIndex((s) => s.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+    const reordered = [...task.subtasks];
+    const [moved] = reordered.splice(oldIndex, 1);
+    reordered.splice(newIndex, 0, moved);
+    const items = reordered.map((s, i) => ({ id: s.id, order: i }));
+    await api.reorder(items, "task");
+    onRefresh();
+  };
+
   const handleToggleSubtask = async (subtaskId: string, completed: boolean) => {
-    await api.tasks.update(subtaskId, { completed: !completed });
+    await api.subtasks.update(task.id, subtaskId, { completed: !completed });
     onRefresh();
   };
 
   const handleDeleteSubtask = async (subtaskId: string) => {
-    await api.tasks.delete(subtaskId);
+    await api.subtasks.delete(task.id, subtaskId);
     onRefresh();
   };
 
@@ -621,7 +637,7 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-auto px-4 py-4 space-y-6">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 py-4 space-y-6">
         {/* Title */}
         {editingTitle ? (
           <div className="flex items-start gap-3">
@@ -840,7 +856,8 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
             </div>
           )}
 
-          <SortableContext items={task.subtasks?.map((s) => s.id) || []} strategy={verticalListSortingStrategy}>
+          <DndContext sensors={subtaskSensors} collisionDetection={closestCenter} onDragEnd={handleSubtaskDragEnd}>
+            <SortableContext items={task.subtasks?.map((s) => s.id) || []} strategy={verticalListSortingStrategy}>
               <div className="space-y-1">
                 {task.subtasks?.map((subtask) => (
                   <SortableSubtaskRow
@@ -850,12 +867,13 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
                     onSelect={() => setSelectedSubtaskId(subtask.id)}
                     onToggle={() => handleToggleSubtask(subtask.id, subtask.completed)}
                     onDelete={() => handleDeleteSubtask(subtask.id)}
-                    onUpdate={async (data) => { await api.tasks.update(subtask.id, data); onRefresh(); }}
+                    onUpdate={async (data) => { await api.subtasks.update(task.id, subtask.id, data); onRefresh(); }}
                     onNavigate={() => onSelectTask?.(subtask.id)}
                   />
                 ))}
               </div>
             </SortableContext>
+          </DndContext>
 
           <div className="flex gap-2 mt-2">
             <input
@@ -1222,18 +1240,15 @@ function SortableSubtaskRow({
     <div
       ref={(node) => { setNodeRef(node); (rowRef as React.MutableRefObject<HTMLDivElement | null>).current = node; }}
       style={style}
+      {...attributes}
+      {...listeners}
       tabIndex={isSelected ? 0 : -1}
       onClick={handleClick}
       onKeyDown={handleKeyDown}
-      className={`flex items-center gap-2 group cursor-pointer rounded transition-colors outline-none px-1 py-0.5 ${
+      className={`flex items-center gap-2 group cursor-grab rounded transition-colors outline-none px-1 py-0.5 ${
         isSelected ? "bg-indigo-50 ring-1 ring-indigo-200" : "hover:bg-gray-50"
       }`}
     >
-      <span {...attributes} {...listeners} className="cursor-grab text-gray-300 hover:text-gray-500">
-        <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
-          <path d="M7 2a2 2 0 10.001 4.001A2 2 0 007 2zm0 6a2 2 0 10.001 4.001A2 2 0 007 8zm0 6a2 2 0 10.001 4.001A2 2 0 007 14zm6-8a2 2 0 10-.001-4.001A2 2 0 0013 6zm0 2a2 2 0 10.001 4.001A2 2 0 0013 8zm0 6a2 2 0 10.001 4.001A2 2 0 0013 14z" />
-        </svg>
-      </span>
       <button
         onClick={(e) => { e.stopPropagation(); onToggle(); }}
         className={`w-4 h-4 rounded border shrink-0 flex items-center justify-center transition-colors ${
@@ -1309,26 +1324,58 @@ function legacyToHtml(md: string): string {
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")
-        .replace(/(https?:\/\/[^\s<>)"',]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer" class="text-indigo-600 underline decoration-indigo-300 hover:decoration-indigo-600">$1</a>')
+        .replace(/(https?:\/\/[^\s<>)"',]+)/g, `<a href="$1" target="_blank" rel="noopener noreferrer" class="${LINK_CLASSES}">$1</a>`)
         .replace(/\n/g, "<br>");
     })
     .join("");
 }
 
+/** Auto-link URLs in HTML content, skipping URLs already inside <a> tags */
+function autoLinkHtml(html: string): string {
+  return html.replace(/<a\b[^>]*>[\s\S]*?<\/a>|(https?:\/\/[^\s<>)"',]+)/g, (match, url) => {
+    if (!url) return match;
+    const escapedUrl = url.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+    return `<a href="${escapedUrl}" target="_blank" rel="noopener noreferrer" class="${LINK_CLASSES}">${escapeHtml(url)}</a>`;
+  });
+}
+
 /** Convert stored value → editor innerHTML (handles both legacy text and HTML) */
 function valueToHtml(value: string): string {
   if (!value) return "";
-  if (isHtmlContent(value)) return value;
+  if (isHtmlContent(value)) return autoLinkHtml(value);
   return legacyToHtml(value);
 }
 
+/** Escape text for HTML content */
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+const AUTO_LINK_RE = /(https?:\/\/[^\s<>)"',]+)/g;
+const LINK_CLASSES = 'text-indigo-600 underline decoration-indigo-300 hover:decoration-indigo-600';
+
 /** Extract clean HTML from the contentEditable DOM, preserving formatting */
-function domToHtml(el: HTMLElement): string {
+function domToHtml(el: HTMLElement, insideAnchor = false): string {
   let result = "";
   for (const node of Array.from(el.childNodes)) {
     if (node.nodeType === Node.TEXT_NODE) {
       const text = node.textContent || "";
-      result += text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      if (insideAnchor) {
+        result += escapeHtml(text);
+      } else {
+        // Auto-link URLs in text nodes
+        let last = 0;
+        let match;
+        AUTO_LINK_RE.lastIndex = 0;
+        while ((match = AUTO_LINK_RE.exec(text)) !== null) {
+          result += escapeHtml(text.substring(last, match.index));
+          const url = match[1];
+          const escapedUrl = url.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+          result += `<a href="${escapedUrl}" target="_blank" rel="noopener noreferrer" class="${LINK_CLASSES}">${escapeHtml(url)}</a>`;
+          last = match.index + match[0].length;
+        }
+        result += escapeHtml(text.substring(last));
+      }
     } else if (node.nodeType === Node.ELEMENT_NODE) {
       const element = node as HTMLElement;
       const tag = element.tagName;
@@ -1340,7 +1387,7 @@ function domToHtml(el: HTMLElement): string {
         result += `<img src="${src}" alt="${alt}"${widthStyle} class="max-w-full rounded-lg my-1 inline-block" contenteditable="false" />`;
       } else if (tag === "A") {
         const href = (element.getAttribute("href") || "").replace(/&/g, "&amp;").replace(/"/g, "&quot;");
-        result += `<a href="${href}" target="_blank" rel="noopener noreferrer" class="text-indigo-600 underline decoration-indigo-300 hover:decoration-indigo-600">${domToHtml(element)}</a>`;
+        result += `<a href="${href}" target="_blank" rel="noopener noreferrer" class="${LINK_CLASSES}">${domToHtml(element, true)}</a>`;
       } else if (tag === "BR") {
         result += "<br>";
       } else if (tag === "UL" || tag === "OL") {
@@ -1637,8 +1684,11 @@ export function RichDescriptionEditor({
   const [empty, setEmpty] = useState(!value);
   const [dragOver, setDragOver] = useState(false);
   const [selectedImg, setSelectedImg] = useState<HTMLImageElement | null>(null);
+  const [linkPopup, setLinkPopup] = useState<{ url: string; rect: DOMRect } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const history = useEditorHistory(editorRef);
+
+  const closeLinkPopup = useCallback(() => setLinkPopup(null), []);
 
   // Deselect image on outside click
   useEffect(() => {
@@ -1717,13 +1767,38 @@ export function RichDescriptionEditor({
         suppressContentEditableWarning
         onInput={handleInput}
         onBlur={handleBlur}
+        onMouseDown={(e) => {
+          // Ctrl+click / Cmd+click on links: open immediately
+          if (e.ctrlKey || e.metaKey) {
+            // e.target in contentEditable often points to the editor div itself,
+            // so use elementFromPoint to get the actual element under the cursor
+            const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+            const anchor = el?.closest("a") as HTMLAnchorElement | null;
+            if (anchor && editorRef.current?.contains(anchor)) {
+              e.preventDefault();
+              window.open(anchor.href, "_blank", "noopener,noreferrer");
+            }
+          }
+        }}
         onClick={(e) => {
-          const target = e.target as HTMLElement;
-          if (target.tagName === "IMG" && editorRef.current?.contains(target)) {
+          const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+          if (el?.tagName === "IMG" && editorRef.current?.contains(el)) {
             e.preventDefault();
-            setSelectedImg(target as HTMLImageElement);
+            setSelectedImg(el as HTMLImageElement);
+            setLinkPopup(null);
           } else {
             setSelectedImg(null);
+            // Handle link clicks inside contentEditable (regular click shows popup)
+            const anchor = el?.closest("a") as HTMLAnchorElement | null;
+            if (anchor && editorRef.current?.contains(anchor)) {
+              e.preventDefault();
+              if (!(e.ctrlKey || e.metaKey)) {
+                const rect = anchor.getBoundingClientRect();
+                setLinkPopup({ url: anchor.href, rect });
+              }
+            } else {
+              setLinkPopup(null);
+            }
           }
         }}
         onKeyDown={(e) => {
@@ -1977,6 +2052,7 @@ export function RichDescriptionEditor({
           onContentChange={saveContent}
         />
       )}
+      {linkPopup && <LinkPopup url={linkPopup.url} anchorRect={linkPopup.rect} onClose={closeLinkPopup} />}
     </div>
   );
 }
@@ -2118,7 +2194,7 @@ const RichCommentInput = forwardRef<
   }
 
   return (
-    <div className="relative flex-1" ref={containerRef}>
+    <div className="relative flex-1 min-w-0" ref={containerRef}>
       {empty && (
         <div className="absolute top-1.5 left-3 text-sm text-gray-400 pointer-events-none" style={{ zIndex: 1 }}>
           Add a comment...

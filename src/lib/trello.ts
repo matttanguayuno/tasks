@@ -242,12 +242,15 @@ export async function syncCard(sprintTaskId: string): Promise<void> {
 
   if (st.trelloCardId) {
     // Update existing card
+    // Ensure a due date exists when completing — dueComplete requires a due date
+    const due = dueDateToTrello(st.task.dueDate)
+      || (st.task.completed ? dueDateToTrello(st.task.completedAt ?? new Date()) : null);
     await trelloFetch(`/cards/${st.trelloCardId}`, "PUT", {
       name: st.task.title,
       desc: htmlToMarkdown(st.task.description || ""),
       idList: listId,
-      closed: st.task.completed,
-      due: dueDateToTrello(st.task.dueDate),
+      due,
+      dueComplete: st.task.completed,
     });
   } else {
     // Create new card
@@ -293,12 +296,15 @@ export async function syncTaskToCards(taskId: string): Promise<void> {
   for (const st of sprintTasks) {
     if (!st.trelloCardId) continue;
     const listId = await ensureListForColumn(st.columnId, st.sprintId);
+    // Ensure a due date exists when completing — dueComplete requires a due date
+    const due = dueDateToTrello(st.task.dueDate)
+      || (st.task.completed ? dueDateToTrello(st.task.completedAt ?? new Date()) : null);
     await trelloFetch(`/cards/${st.trelloCardId}`, "PUT", {
       name: st.task.title,
       desc: htmlToMarkdown(st.task.description || ""),
       idList: listId || undefined,
-      closed: st.task.completed,
-      due: dueDateToTrello(st.task.dueDate),
+      due,
+      dueComplete: st.task.completed,
     });
   }
 }
@@ -637,10 +643,10 @@ export async function pullChangesFromTrello(sprintId: string): Promise<TrelloPul
   });
   if (!sprint?.trelloBoardId) return [];
 
-  // Get all cards on the board
+  // Get all cards on the board (including archived so we can detect Trello-side completions)
   const cards = (await trelloFetch(
-    `/boards/${sprint.trelloBoardId}/cards?fields=name,desc,idList,closed,due`
-  )) as Array<{ id: string; name: string; desc: string; idList: string; closed: boolean; due: string | null }> | null;
+    `/boards/${sprint.trelloBoardId}/cards?filter=all&fields=name,desc,idList,closed,due,dueComplete`
+  )) as Array<{ id: string; name: string; desc: string; idList: string; closed: boolean; due: string | null; dueComplete: boolean }> | null;
 
   if (!cards) return [];
 
@@ -763,14 +769,15 @@ export async function pullChangesFromTrello(sprintId: string): Promise<TrelloPul
       });
     }
 
-    // Check completed (archived in Trello)
-    if (card.closed && !st.task.completed) {
+    // Check completed (dueComplete in Trello, or archived)
+    const trelloCompleted = card.dueComplete || card.closed;
+    if (trelloCompleted && !st.task.completed) {
       await prisma.task.update({
         where: { id: st.taskId },
         data: { completed: true, completedAt: new Date(), inProgress: false },
       });
       changes.push({ type: "complete", taskId: st.taskId, taskTitle: st.task.title });
-    } else if (!card.closed && st.task.completed) {
+    } else if (!card.dueComplete && !card.closed && st.task.completed) {
       await prisma.task.update({
         where: { id: st.taskId },
         data: { completed: false, completedAt: null, inProgress: false },

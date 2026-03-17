@@ -343,14 +343,43 @@ export function ProjectView({ project, onRefresh, pushAction, initialTaskId, onI
           const rect = el.getBoundingClientRect();
           const relativeY = (pointerYRef.current - rect.top) / rect.height;
 
+          const activeTask = findTaskDeep(src, activeId);
+          const areSiblings = activeTask && activeTask.parentId === overTask.parentId
+            && activeTask.sectionId === overTask.sectionId;
+          // When dragging a subtask over its own parent, treat as reorder within that parent
+          const isDraggingOverOwnParent = activeTask?.parentId === overId;
+
           let newIntent: DragIntent;
-          if (relativeY < 0.25) {
+          if (isDraggingOverOwnParent) {
+            // Keep as a child — redirect to first/last sibling to stay within parent
+            const parentTask = overTask;
+            const siblings = (parentTask.subtasks ?? []).filter((s) => s.id !== activeId);
+            if (siblings.length > 0) {
+              if (relativeY < 0.5) {
+                newIntent = { type: "insert", targetId: siblings[0].id, position: "before" };
+              } else {
+                newIntent = { type: "insert", targetId: siblings[siblings.length - 1].id, position: "after" };
+              }
+            } else {
+              // Only subtask — nothing to reorder, keep current state
+              dragIntentRef.current = null;
+              setDragIntent(null);
+              subtaskDropTargetRef.current = null;
+              setSubtaskDropTargetId(null);
+              setDragOverSectionId(null);
+              return;
+            }
+          } else if (areSiblings) {
+            // Siblings: no nesting, just before/after with 50/50 split
+            newIntent = relativeY < 0.5
+              ? { type: "insert", targetId: overId, position: "before" }
+              : { type: "insert", targetId: overId, position: "after" };
+          } else if (relativeY < 0.25) {
             newIntent = { type: "insert", targetId: overId, position: "before" };
           } else if (relativeY > 0.75) {
             newIntent = { type: "insert", targetId: overId, position: "after" };
           } else {
             // Check for circular nesting (can't nest a task under its own descendant)
-            const activeTask = findTaskDeep(src, activeId);
             if (activeTask && isDescendantOf(activeTask, overId)) {
               newIntent = { type: "insert", targetId: overId, position: "after" };
             } else {
@@ -762,7 +791,9 @@ export function ProjectView({ project, onRefresh, pushAction, initialTaskId, onI
     if (!newTaskTitle.trim()) return;
     creatingTaskRef.current = true;
     const title = newTaskTitle.trim();
-    const created = await api.tasks.create({ title, sectionId, parentId }) as { id: string };
+    const created = parentId
+      ? await api.subtasks.create(parentId, { title }) as { id: string }
+      : await api.tasks.create({ title, sectionId }) as { id: string };
     const ref = { id: created.id };
 
     // If inserting after a specific task, reorder to place it right after
@@ -1258,7 +1289,7 @@ export function ProjectView({ project, onRefresh, pushAction, initialTaskId, onI
       e.preventDefault();
       const parentId = selectedTask.parentId ? selectedTask.parentId : selectedTask.id;
       const sectionId = selectedTask.sectionId;
-      api.tasks.create({ title, sectionId, parentId }).then(() => {
+      api.subtasks.create(parentId, { title }).then(() => {
         // Expand the parent task to show the new subtask
         setExpandedTasks((prev) => new Set(prev).add(parentId));
         onRefresh();

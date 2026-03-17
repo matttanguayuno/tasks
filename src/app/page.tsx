@@ -44,6 +44,16 @@ export default function Home() {
     loadProjects();
   }, [loadProjects]);
 
+  // Auto-collapse sidebar when window shrinks below lg breakpoint
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 1024px)");
+    const handler = (e: MediaQueryListEvent) => {
+      if (!e.matches) setSidebarOpen(false);
+    };
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
+
   useEffect(() => {
     if (activeProjectId) {
       loadProject(activeProjectId);
