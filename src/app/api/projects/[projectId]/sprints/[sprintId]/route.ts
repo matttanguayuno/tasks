@@ -1,7 +1,8 @@
 import { prisma } from "@/lib/prisma";
 import { taskListInclude } from "@/lib/prisma-includes";
 import { NextRequest, NextResponse } from "next/server";
-import { deleteTrelloBoard, fireAndForget } from "@/lib/trello";
+import { after } from "next/server";
+import { deleteTrelloBoard, trelloSync } from "@/lib/trello";
 
 export async function GET(
   _request: NextRequest,
@@ -50,7 +51,7 @@ export async function DELETE(
   const sprint = await prisma.sprint.findUnique({ where: { id: sprintId } });
   await prisma.sprint.delete({ where: { id: sprintId } });
   if (sprint?.trelloBoardId) {
-    fireAndForget(() => deleteTrelloBoard(sprint.trelloBoardId!));
+    after(trelloSync(() => deleteTrelloBoard(sprint.trelloBoardId!)));
   }
   return NextResponse.json({ success: true });
 }

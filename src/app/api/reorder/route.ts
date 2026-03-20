@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
-import { syncReorderedCards, fireAndForget } from "@/lib/trello";
+import { after } from "next/server";
+import { syncReorderedCards, trelloSync } from "@/lib/trello";
 
 export async function POST(request: NextRequest) {
   const body = await request.json();
@@ -40,7 +41,7 @@ export async function POST(request: NextRequest) {
 
   if (type === "sprintTask") {
     // syncReorderedCards internally checks for trelloCardId on each task
-    fireAndForget(() => syncReorderedCards(items));
+    after(trelloSync(() => syncReorderedCards(items)));
   }
 
   return NextResponse.json({ success: true });

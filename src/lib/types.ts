@@ -67,6 +67,7 @@ export interface ProjectWithSections {
   order: number;
   sprintDuration: number;
   sprintStartDay: number;
+  sprintStartDate: string | null;
   createdAt: string;
   updatedAt: string;
   sections: SectionWithTasks[];

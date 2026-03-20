@@ -266,6 +266,24 @@ export const api = {
       }),
   },
 
+  teamMembers: {
+    list: () => fetchJson<unknown[]>(`${API_BASE}/team-members`),
+    create: (data?: Record<string, string>) =>
+      fetchJson<unknown>(`${API_BASE}/team-members`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data || {}),
+      }),
+    update: (id: string, data: Record<string, unknown>) =>
+      fetchJson<unknown>(`${API_BASE}/team-members/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      }),
+    delete: (id: string) =>
+      fetchJson<unknown>(`${API_BASE}/team-members/${id}`, { method: "DELETE" }),
+  },
+
   trello: {
     status: () => fetchJson<{ configured: boolean }>(`${API_BASE}/trello/poll`),
     enableSync: (sprintId: string) =>
@@ -283,6 +301,7 @@ export const api = {
     poll: (sprintId: string) =>
       fetchJson<{
         configured: boolean;
+        authError?: boolean;
         changes: Array<{
           type: "rename" | "move" | "complete" | "reopen";
           taskId: string;

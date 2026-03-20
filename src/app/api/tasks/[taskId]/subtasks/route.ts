@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
-import { syncChecklistToTrello, fireAndForget } from "@/lib/trello";
+import { after } from "next/server";
+import { syncChecklistToTrello, trelloSync } from "@/lib/trello";
 
 export async function POST(
   request: NextRequest,
@@ -30,6 +31,6 @@ export async function POST(
       _count: { select: { comments: true, attachments: true, subtasks: true } },
     },
   });
-  fireAndForget(() => syncChecklistToTrello(taskId));
+  after(trelloSync(() => syncChecklistToTrello(taskId)));
   return NextResponse.json(subtask, { status: 201 });
 }

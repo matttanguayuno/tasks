@@ -8,6 +8,7 @@ interface SprintSettingsModalProps {
   projectId: string;
   currentDuration: number;
   currentStartDay: number;
+  currentStartDate: string | null;
   columns: BoardColumn[];
   currentSprint: Sprint | null;
   trelloConfigured: boolean;
@@ -31,6 +32,7 @@ export default function SprintSettingsModal({
   projectId,
   currentDuration,
   currentStartDay,
+  currentStartDate,
   columns: initialColumns,
   currentSprint,
   trelloConfigured,
@@ -41,6 +43,9 @@ export default function SprintSettingsModal({
 }: SprintSettingsModalProps) {
   const [duration, setDuration] = useState(currentDuration);
   const [startDay, setStartDay] = useState(currentStartDay);
+  const [startDate, setStartDate] = useState(
+    currentStartDate ? currentStartDate.slice(0, 10) : ""
+  );
   const [saving, setSaving] = useState(false);
   const [columns, setColumns] = useState<BoardColumn[]>(initialColumns);
   const [newColumnName, setNewColumnName] = useState("");
@@ -48,6 +53,8 @@ export default function SprintSettingsModal({
   const [editName, setEditName] = useState("");
   const [reordering, setReordering] = useState(false);
   const [trelloSyncing, setTrelloSyncing] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -62,10 +69,12 @@ export default function SprintSettingsModal({
     await api.projects.update(projectId, {
       sprintDuration: duration,
       sprintStartDay: startDay,
+      sprintStartDate: startDate || null,
     });
     setSaving(false);
     onSave();
     onColumnsChange();
+    onSprintChange();
     onClose();
   };
 
@@ -116,6 +125,22 @@ export default function SprintSettingsModal({
       "boardColumn"
     );
     setReordering(false);
+  };
+
+  const handleDeleteSprint = async () => {
+    if (!currentSprint) return;
+    setDeleting(true);
+    try {
+      await api.sprints.delete(projectId, currentSprint.id);
+      onSprintChange();
+      onClose();
+    } catch (err) {
+      console.error("Failed to delete sprint:", err);
+      alert("Failed to delete sprint.");
+    } finally {
+      setDeleting(false);
+      setConfirmDelete(false);
+    }
   };
 
   const handleToggleTrello = async () => {
@@ -175,6 +200,18 @@ export default function SprintSettingsModal({
                   ))}
                 </select>
               </div>
+            </div>
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">Sprint 1 Start Week</label>
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="w-full px-3 py-2 text-sm bg-gray-800 border border-gray-700 rounded text-gray-200 focus:outline-none focus:border-indigo-500"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Anchor date for Sprint 1. All sprint dates are calculated from this.
+              </p>
             </div>
           </div>
 
@@ -259,6 +296,46 @@ export default function SprintSettingsModal({
               </button>
             </div>
           </div>
+
+          {/* Delete Sprint */}
+          {currentSprint && (
+            <>
+              <div className="border-t border-gray-700" />
+              <div className="space-y-3">
+                <h3 className="text-sm font-medium text-gray-300 uppercase tracking-wider">Danger Zone</h3>
+                {confirmDelete ? (
+                  <div className="bg-red-900/20 border border-red-800 rounded p-3 space-y-2">
+                    <p className="text-sm text-red-300">
+                      Delete Sprint {currentSprint.number}? Tasks will be kept but removed from this sprint.
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={handleDeleteSprint}
+                        disabled={deleting}
+                        className="px-3 py-1.5 text-sm bg-red-600 text-white rounded hover:bg-red-500 disabled:opacity-50"
+                      >
+                        {deleting ? "Deleting..." : "Yes, Delete"}
+                      </button>
+                      <button
+                        onClick={() => setConfirmDelete(false)}
+                        disabled={deleting}
+                        className="px-3 py-1.5 text-sm text-gray-400 hover:text-white"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setConfirmDelete(true)}
+                    className="px-3 py-1.5 text-sm bg-red-600/20 text-red-400 rounded hover:bg-red-600/30 transition-colors"
+                  >
+                    Delete Sprint {currentSprint.number}
+                  </button>
+                )}
+              </div>
+            </>
+          )}
 
           {/* Trello integration */}
           {trelloConfigured && currentSprint && (

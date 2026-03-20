@@ -1,8 +1,9 @@
 import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
+import { after } from "next/server";
 import { writeFile, mkdir } from "fs/promises";
 import path from "path";
-import { syncAttachmentsToCard, fireAndForget } from "@/lib/trello";
+import { syncAttachmentsToCard, trelloSync } from "@/lib/trello";
 
 const UPLOADS_DIR = path.join(process.cwd(), "uploads");
 
@@ -41,7 +42,7 @@ export async function POST(
         taskId,
       },
     });
-    fireAndForget(() => syncAttachmentsToCard(taskId));
+    after(trelloSync(() => syncAttachmentsToCard(taskId)));
     return NextResponse.json(attachment, { status: 201 });
   }
 

@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
-import { syncCommentToCards, deleteCommentFromCards, fireAndForget } from "@/lib/trello";
+import { after } from "next/server";
+import { syncCommentToCards, deleteCommentFromCards, trelloSync } from "@/lib/trello";
 
 export async function PATCH(
   request: NextRequest,
@@ -13,7 +14,7 @@ export async function PATCH(
     data: { content: body.content },
   });
 
-  fireAndForget(() => syncCommentToCards(taskId, commentId, body.content));
+  after(trelloSync(() => syncCommentToCards(taskId, commentId, body.content)));
 
   return NextResponse.json(comment);
 }
@@ -25,7 +26,7 @@ export async function DELETE(
   const { taskId, commentId } = await params;
   const comment = await prisma.comment.findUnique({ where: { id: commentId } });
   if (comment?.trelloCommentId) {
-    fireAndForget(() => deleteCommentFromCards(taskId, comment.trelloCommentId!));
+    after(trelloSync(() => deleteCommentFromCards(taskId, comment.trelloCommentId!)));
   }
   await prisma.comment.delete({ where: { id: commentId } });
   return NextResponse.json({ success: true });

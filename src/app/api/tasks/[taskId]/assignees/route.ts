@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
-import { syncAssigneesToCard, fireAndForget } from "@/lib/trello";
+import { after } from "next/server";
+import { syncAssigneesToCard, trelloSync } from "@/lib/trello";
 
 export async function GET(
   _request: NextRequest,
@@ -28,7 +29,7 @@ export async function POST(
     },
   });
 
-  fireAndForget(() => syncAssigneesToCard(taskId));
+  after(trelloSync(() => syncAssigneesToCard(taskId)));
 
   return NextResponse.json(assignee, { status: 201 });
 }
@@ -41,14 +42,18 @@ export async function DELETE(
   const { searchParams } = new URL(request.url);
   const assigneeId = searchParams.get("assigneeId");
 
-  if (assigneeId) {
-    await prisma.taskAssignee.delete({ where: { id: assigneeId } });
-  } else {
-    // Delete all assignees for this task
-    await prisma.taskAssignee.deleteMany({ where: { taskId } });
+  try {
+    if (assigneeId) {
+      await prisma.taskAssignee.delete({ where: { id: assigneeId } });
+    } else {
+      // Delete all assignees for this task
+      await prisma.taskAssignee.deleteMany({ where: { taskId } });
+    }
+  } catch {
+    return NextResponse.json({ error: "Assignee not found" }, { status: 404 });
   }
 
-  fireAndForget(() => syncAssigneesToCard(taskId));
+  after(trelloSync(() => syncAssigneesToCard(taskId)));
 
   return NextResponse.json({ success: true });
 }

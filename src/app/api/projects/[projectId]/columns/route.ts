@@ -1,6 +1,5 @@
 import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
-import { fireAndForget } from "@/lib/trello";
 
 export async function GET(
   _request: NextRequest,

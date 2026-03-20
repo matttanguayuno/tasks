@@ -6,6 +6,7 @@ import { ProjectView } from "@/components/ProjectView";
 import { SearchResults } from "@/components/SearchResults";
 import { Dashboard } from "@/components/Dashboard";
 import BoardView from "@/components/BoardView";
+import TeamMembersPanel from "@/components/TeamMembersPanel";
 import { api } from "@/lib/api";
 import { useUndoRedo } from "@/hooks/useUndoRedo";
 import type { ProjectSummary, ProjectWithSections, Sprint, TaskWithRelations } from "@/lib/types";
@@ -382,13 +383,15 @@ export default function Home() {
                   projectName={activeProject.name}
                   sprintDuration={activeProject.sprintDuration}
                   sprintStartDay={activeProject.sprintStartDay}
+                  sprintStartDate={activeProject.sprintStartDate}
                   onSelectTask={(task) => setBoardSelectedTaskId(task.id)}
+                  onDeselect={() => { setBoardSelectedTaskId(null); setBoardSelectedTask(null); }}
                   selectedTaskId={boardSelectedTaskId}
                   onRefresh={refreshProject}
                   refreshKey={boardRefreshKey}
                 />
               </div>
-              {boardSelectedTask && (
+              {boardSelectedTask ? (
                 <TaskDetail
                   task={boardSelectedTask}
                   projectId={activeProject.id}
@@ -405,7 +408,11 @@ export default function Home() {
                     const full = await api.tasks.get(taskId);
                     setBoardSelectedTask(full as TaskWithRelations);
                   }}
+                  storageKey="boardDetailPanelWidth"
+                  defaultWidth="md:w-[380px] lg:w-[420px] xl:w-[480px]"
                 />
+              ) : (
+                <TeamMembersPanel />
               )}
             </div>
           ) : (

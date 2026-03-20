@@ -27,6 +27,8 @@ interface TaskDetailProps {
   onDelete?: () => void;
   onSelectTask?: (taskId: string) => void;
   pushAction?: (action: UndoAction) => void;
+  storageKey?: string;
+  defaultWidth?: string;
 }
 
 function RequesterInput({ value, onChange }: { value: string; onChange: (val: string) => void }) {
@@ -239,7 +241,7 @@ function SprintSelector({ taskId, projectId, onUpdate }: { taskId: string; proje
   );
 }
 
-export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSelectTask, pushAction }: TaskDetailProps) {
+export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSelectTask, pushAction, storageKey = "detailPanelWidth", defaultWidth = "md:w-[450px] lg:w-[550px] xl:w-[650px]" }: TaskDetailProps) {
   const subtaskSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
   const [title, setTitle] = useState(task.title);
   const [editingTitle, setEditingTitle] = useState(false);
@@ -303,7 +305,7 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
 
   // Restore saved width from localStorage after mount
   useEffect(() => {
-    const saved = localStorage.getItem("detailPanelWidth");
+    const saved = localStorage.getItem(storageKey);
     if (saved) setPanelWidth(parseInt(saved, 10));
   }, []);
 
@@ -327,7 +329,7 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
       const width = panelRef.current?.offsetWidth;
-      if (width) localStorage.setItem("detailPanelWidth", String(width));
+      if (width) localStorage.setItem(storageKey, String(width));
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
     };
@@ -491,7 +493,7 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
   return (
     <div
       ref={panelRef}
-      className={`w-full border-l border-gray-200 bg-white flex flex-col overflow-hidden shrink-0 relative ${panelWidth === 0 ? "md:w-[450px] lg:w-[550px] xl:w-[650px]" : ""}`}
+      className={`w-full border-l border-gray-200 bg-white flex flex-col overflow-hidden shrink-0 relative ${panelWidth === 0 ? defaultWidth : ""}`}
       style={panelWidth > 0 ? { width: panelWidth } : undefined}
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}

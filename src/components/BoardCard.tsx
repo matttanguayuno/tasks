@@ -38,6 +38,7 @@ export default function BoardCard({ sprintTask, isSelected, onClick }: BoardCard
       {...attributes}
       {...listeners}
       onClick={onClick}
+      data-board-card
       className={`relative p-3 rounded-lg border-2 cursor-pointer transition-colors ${
         isDragging
           ? "opacity-50 border-indigo-500 bg-gray-800"

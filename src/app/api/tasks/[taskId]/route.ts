@@ -1,7 +1,8 @@
 import { prisma } from "@/lib/prisma";
 import { taskListInclude } from "@/lib/prisma-includes";
 import { NextRequest, NextResponse } from "next/server";
-import { syncTaskToCards, fireAndForget } from "@/lib/trello";
+import { after } from "next/server";
+import { syncTaskToCards, archiveCard, trelloSync } from "@/lib/trello";
 
 export async function GET(
   _request: NextRequest,
@@ -63,7 +64,7 @@ export async function PATCH(
       include: taskListInclude as Record<string, unknown>,
     });
 
-    fireAndForget(() => syncTaskToCards(taskId));
+    after(trelloSync(() => syncTaskToCards(taskId)));
 
     return NextResponse.json(task);
   } catch (err) {
@@ -78,7 +79,24 @@ export async function DELETE(
 ) {
   const { taskId } = await params;
   try {
+    // Archive associated Trello cards before deleting the task
+    const sprintTasks = await prisma.sprintTask.findMany({
+      where: { taskId },
+      select: { trelloCardId: true },
+    });
+    const cardIds = sprintTasks
+      .map((st) => st.trelloCardId)
+      .filter((id): id is string => !!id);
+
     await prisma.task.delete({ where: { id: taskId } });
+
+    if (cardIds.length > 0) {
+      after(trelloSync(async () => {
+        for (const cardId of cardIds) {
+          await archiveCard(cardId);
+        }
+      }));
+    }
   } catch {
     return NextResponse.json({ error: "Task not found" }, { status: 404 });
   }

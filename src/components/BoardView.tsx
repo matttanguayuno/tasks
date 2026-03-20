@@ -38,7 +38,9 @@ interface BoardViewProps {
   projectName: string;
   sprintDuration: number;
   sprintStartDay: number;
+  sprintStartDate: string | null;
   onSelectTask: (task: TaskWithRelations) => void;
+  onDeselect?: () => void;
   selectedTaskId: string | null;
   onRefresh: () => void;
   refreshKey?: number;
@@ -179,7 +181,9 @@ export default function BoardView({
   projectName,
   sprintDuration,
   sprintStartDay,
+  sprintStartDate,
   onSelectTask,
+  onDeselect,
   selectedTaskId,
   onRefresh,
   refreshKey,
@@ -192,6 +196,7 @@ export default function BoardView({
   const [loading, setLoading] = useState(true);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [showTaskPanel, setShowTaskPanel] = useState(false);
+  const [trelloAuthError, setTrelloAuthError] = useState(false);
   const [projectTasks, setProjectTasks] = useState<ProjectWithSections | null>(null);
   const [panelWidth, setPanelWidth] = useState(288);
   const resizingRef = useRef(false);
@@ -269,6 +274,11 @@ export default function BoardView({
     const interval = setInterval(async () => {
       try {
         const result = await api.trello.poll(selectedSprintId);
+        if ((result as { authError?: boolean })?.authError) {
+          setTrelloAuthError(true);
+          return;
+        }
+        setTrelloAuthError(false);
         if (result?.changes && result.changes.length > 0) {
           // Reload sprint data to reflect pulled changes
           await loadSprint(selectedSprintId);
@@ -292,6 +302,8 @@ export default function BoardView({
     }
   }, [showTaskPanel, projectId]);
 
+  const [taskPanelSearch, setTaskPanelSearch] = useState("");
+
   // Task IDs already in the current sprint
   const sprintTaskIds = new Set(
     currentSprint?.sprintTasks.map((st) => st.taskId) ?? []
@@ -299,10 +311,15 @@ export default function BoardView({
 
   // Flatten tasks including subtasks for the panel
   const panelSections = projectTasks
-    ? projectTasks.sections.map((s) => ({
-        ...s,
-        flatTasks: flattenTasks(s.tasks).filter((ft) => !sprintTaskIds.has(ft.task.id)),
-      }))
+    ? projectTasks.sections.map((s) => {
+        const query = taskPanelSearch.trim().toLowerCase();
+        return {
+          ...s,
+          flatTasks: flattenTasks(s.tasks)
+            .filter((ft) => !sprintTaskIds.has(ft.task.id))
+            .filter((ft) => !query || ft.task.title.toLowerCase().includes(query)),
+        };
+      })
     : [];
 
   const panelTaskCount = panelSections.reduce((sum, s) => sum + s.flatTasks.length, 0);
@@ -642,11 +659,20 @@ export default function BoardView({
         </button>
 
         {trelloConfigured && currentSprint?.trelloBoardId && (
-          <span className="text-xs text-green-400 px-2 py-1" title="Syncing to Trello (manage in Settings)">
-            ● Trello
+          <span className={`text-xs px-2 py-1 ${trelloAuthError ? "text-red-400" : "text-green-400"}`} title={trelloAuthError ? "Trello token expired" : "Syncing to Trello (manage in Settings)"}>
+            ● Trello{trelloAuthError && " (token expired)"}
           </span>
         )}
       </div>
+
+      {/* Trello auth error banner */}
+      {trelloAuthError && (
+        <div className="bg-red-900/30 border-b border-red-800 px-4 py-2 flex items-center gap-2 shrink-0">
+          <span className="text-sm text-red-300">
+            ⚠ Trello token expired — sync is paused. Update TRELLO_TOKEN in .env and restart the dev server.
+          </span>
+        </div>
+      )}
 
       {/* Board */}
       <DndContext
@@ -660,14 +686,36 @@ export default function BoardView({
           {/* Task panel */}
           {showTaskPanel && (
             <div className="shrink-0 border-r border-gray-700 bg-gray-900 flex flex-col overflow-hidden relative" style={{ width: panelWidth }}>
-              <div className="flex items-center justify-between px-3 py-2 border-b border-gray-700">
-                <span className="text-xs font-semibold text-gray-300 uppercase tracking-wide">Project Tasks</span>
-                <button
-                  onClick={() => setShowTaskPanel(false)}
-                  className="text-gray-500 hover:text-gray-300 text-sm"
-                >
-                  ✕
-                </button>
+              <div className="px-3 py-2 border-b border-gray-700 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-gray-300 uppercase tracking-wide">Project Tasks</span>
+                  <button
+                    onClick={() => setShowTaskPanel(false)}
+                    className="text-gray-500 hover:text-gray-300 text-sm"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <div className="relative">
+                  <svg className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                  <input
+                    type="text"
+                    value={taskPanelSearch}
+                    onChange={(e) => setTaskPanelSearch(e.target.value)}
+                    placeholder="Search tasks…"
+                    className="w-full pl-7 pr-7 py-1 text-xs bg-gray-800 text-gray-300 placeholder-gray-500 border border-gray-700 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500"
+                  />
+                  {taskPanelSearch && (
+                    <button
+                      onClick={() => setTaskPanelSearch("")}
+                      className="absolute right-1.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 text-xs"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
               </div>
               <div className="flex-1 overflow-y-auto py-1">
                 {panelSections.map((section) => {
@@ -702,6 +750,11 @@ export default function BoardView({
             ref={boardRef}
             className="flex-1 overflow-x-auto overflow-y-hidden p-4"
             tabIndex={0}
+            onClick={(e) => {
+              if (selectedTaskId && !(e.target as HTMLElement).closest("[data-board-card]")) {
+                onDeselect?.();
+              }
+            }}
             onKeyDown={(e) => {
               if (e.key === "Delete" && selectedTaskId) {
                 e.preventDefault();
@@ -746,6 +799,7 @@ export default function BoardView({
           projectId={projectId}
           currentDuration={sprintDuration}
           currentStartDay={sprintStartDay}
+          currentStartDate={sprintStartDate}
           columns={columns}
           currentSprint={currentSprint}
           trelloConfigured={trelloConfigured}
@@ -753,10 +807,17 @@ export default function BoardView({
           onSave={() => onRefresh()}
           onColumnsChange={() => loadColumns()}
           onSprintChange={async () => {
-            if (selectedSprintId) {
-              await loadSprint(selectedSprintId);
-              const sprintList = await loadSprints();
-              setSprints(sprintList);
+            const sprintList = await loadSprints();
+            if (sprintList.length === 0) {
+              setSelectedSprintId(null);
+              setCurrentSprint(null);
+              onRefresh();
+            } else if (!sprintList.find((s) => s.id === selectedSprintId)) {
+              const target = findCurrentSprint(sprintList) || sprintList[sprintList.length - 1];
+              setSelectedSprintId(target.id);
+              await loadSprint(target.id);
+            } else {
+              await loadSprint(selectedSprintId!);
             }
           }}
         />

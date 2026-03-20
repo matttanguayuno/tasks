@@ -112,6 +112,13 @@ function authParams(creds: { key: string; token: string }): string {
   return `key=${encodeURIComponent(creds.key)}&token=${encodeURIComponent(creds.token)}`;
 }
 
+class TrelloAuthError extends Error {
+  constructor() {
+    super("Trello token expired or invalid");
+    this.name = "TrelloAuthError";
+  }
+}
+
 async function trelloFetch(
   path: string,
   method: "GET" | "POST" | "PUT" | "DELETE" = "GET",
@@ -131,10 +138,12 @@ async function trelloFetch(
     });
     if (!res.ok) {
       console.warn(`[Trello] ${method} ${path} → ${res.status} ${res.statusText}`);
+      if (res.status === 401) throw new TrelloAuthError();
       return null;
     }
     return (await res.json()) as Record<string, unknown>;
   } catch (err) {
+    if (err instanceof TrelloAuthError) throw err;
     console.warn(`[Trello] ${method} ${path} failed:`, err);
     return null;
   }
@@ -622,7 +631,7 @@ interface TrelloPullChange {
  * Poll Trello for changes on a sprint's board and apply them locally.
  * Only pulls: renames, column moves, and archive/unarchive (complete/reopen).
  */
-export async function pullChangesFromTrello(sprintId: string): Promise<TrelloPullChange[]> {
+export async function pullChangesFromTrello(sprintId: string): Promise<TrelloPullChange[] | { authError: true }> {
   const creds = getCredentials();
   if (!creds) return [];
 
@@ -644,9 +653,15 @@ export async function pullChangesFromTrello(sprintId: string): Promise<TrelloPul
   if (!sprint?.trelloBoardId) return [];
 
   // Get all cards on the board (including archived so we can detect Trello-side completions)
-  const cards = (await trelloFetch(
-    `/boards/${sprint.trelloBoardId}/cards?filter=all&fields=name,desc,idList,closed,due,dueComplete`
-  )) as Array<{ id: string; name: string; desc: string; idList: string; closed: boolean; due: string | null; dueComplete: boolean }> | null;
+  let cards: Array<{ id: string; name: string; desc: string; idList: string; closed: boolean; due: string | null; dueComplete: boolean }> | null;
+  try {
+    cards = (await trelloFetch(
+      `/boards/${sprint.trelloBoardId}/cards?filter=all&fields=name,desc,idList,closed,due,dueComplete`
+    )) as typeof cards;
+  } catch (err) {
+    if (err instanceof TrelloAuthError) return { authError: true };
+    throw err;
+  }
 
   if (!cards) return [];
 
@@ -671,6 +686,7 @@ export async function pullChangesFromTrello(sprintId: string): Promise<TrelloPul
   }
 
   // Fetch comments, attachments, and checklists for all cards in parallel
+  console.log(`[Trello Pull] Processing ${matchedCards.length} matched cards for sprint ${sprintId}`);
   const [commentResults, attachmentResults, checklistResults] = await Promise.all([
     Promise.all(
       matchedCards.map(({ card }) =>
@@ -698,6 +714,7 @@ export async function pullChangesFromTrello(sprintId: string): Promise<TrelloPul
   for (let i = 0; i < matchedCards.length; i++) {
     const { card, st } = matchedCards[i];
 
+   try {
     // Check description change
     const trelloDesc = (card.desc || "").trim();
     const localHtml = (st.task.description || "").trim();
@@ -787,6 +804,7 @@ export async function pullChangesFromTrello(sprintId: string): Promise<TrelloPul
 
     // Pull comments (already fetched in parallel above)
     const trelloComments = commentResults[i];
+    console.log(`[Trello Pull] Card "${st.task.title}": ${trelloComments?.length ?? 0} comments from Trello`);
     if (trelloComments) {
       const existingComments = await prisma.comment.findMany({
         where: { taskId: st.taskId },
@@ -794,13 +812,16 @@ export async function pullChangesFromTrello(sprintId: string): Promise<TrelloPul
       const knownTrelloIds = new Set(
         existingComments.filter((c) => c.trelloCommentId).map((c) => c.trelloCommentId)
       );
+      console.log(`[Trello Pull] Card "${st.task.title}": ${existingComments.length} local comments, ${knownTrelloIds.size} with trelloId`);
 
       for (const tc of trelloComments) {
         if (knownTrelloIds.has(tc.id)) continue;
+        console.log(`[Trello Pull] NEW comment on "${st.task.title}": "${tc.data.text.slice(0, 60)}..." (${tc.id})`);
 
+        const commentHtml = markdownToHtml(tc.data.text);
         await prisma.comment.create({
           data: {
-            content: tc.data.text,
+            content: commentHtml,
             trelloCommentId: tc.id,
             taskId: st.taskId,
             createdAt: new Date(tc.date),
@@ -956,6 +977,157 @@ export async function pullChangesFromTrello(sprintId: string): Promise<TrelloPul
         }
       }
     }
+   } catch (err) {
+     console.warn(`[Trello] Error processing card ${card.id} for task "${st.task.title}":`, err);
+   }
+  }
+
+  // Import unmatched open cards — cards on the Trello board that have no
+  // matching SprintTask. These were either created directly in Trello or
+  // unarchived by a teammate, so we pull them into the local tool.
+  const knownCardIds = new Set(sprint.sprintTasks.map((st) => st.trelloCardId).filter(Boolean));
+  // Find a section to place imported tasks into (first section of the project)
+  const defaultSection = await prisma.section.findFirst({
+    where: { projectId: sprint.projectId },
+    orderBy: { order: "asc" },
+  });
+  // Find the first board column for placement
+  const firstColumn = columns.length > 0
+    ? columns.reduce((a, b) => (a.order < b.order ? a : b))
+    : null;
+
+  if (defaultSection && firstColumn) {
+    for (const card of cards) {
+      if (card.closed) continue; // archived — leave it alone
+      if (knownCardIds.has(card.id)) continue; // already tracked
+
+      console.log(`[Trello Pull] Importing unmatched card "${card.name}" (${card.id})`);
+
+      // Get max task order in the section
+      const maxTaskOrder = await prisma.task.aggregate({
+        where: { sectionId: defaultSection.id, parentId: null },
+        _max: { order: true },
+      });
+      const nextOrder = (maxTaskOrder._max.order ?? -1) + 1;
+
+      // Parse due date if present
+      const dueDateVal = card.due ? new Date(card.due) : null;
+
+      // Create the task
+      const newTask = await prisma.task.create({
+        data: {
+          title: card.name,
+          description: card.desc ? markdownToHtml(card.desc) : "",
+          sectionId: defaultSection.id,
+          order: nextOrder,
+          dueDate: dueDateVal,
+          completed: card.dueComplete,
+          completedAt: card.dueComplete ? new Date() : null,
+        },
+      });
+
+      // Get max sprint task order in the column
+      const maxStOrder = await prisma.sprintTask.aggregate({
+        where: { sprintId: sprint.id, columnId: firstColumn.id },
+        _max: { order: true },
+      });
+
+      // Determine which column from the card's Trello list
+      const cardColumn = listToColumn.get(card.idList) ?? firstColumn;
+
+      // Create SprintTask linking it to the sprint
+      const newSprintTask = await prisma.sprintTask.create({
+        data: {
+          sprintId: sprint.id,
+          taskId: newTask.id,
+          columnId: cardColumn.id,
+          order: (maxStOrder._max.order ?? -1) + 1,
+          trelloCardId: card.id,
+        },
+      });
+
+      // Pull comments from the card
+      const cardComments = await trelloFetch(
+        `/cards/${card.id}/actions?filter=commentCard&fields=data,idMemberCreator,date`
+      ) as Array<{ id: string; data: { text: string }; date: string }> | null;
+      if (cardComments) {
+        for (const tc of cardComments) {
+          await prisma.comment.create({
+            data: {
+              content: markdownToHtml(tc.data.text),
+              trelloCommentId: tc.id,
+              taskId: newTask.id,
+              createdAt: new Date(tc.date),
+            },
+          });
+        }
+      }
+
+      // Pull link attachments from the card
+      const cardAttachments = await trelloFetch(
+        `/cards/${card.id}/attachments`
+      ) as Array<{ id: string; url: string; name: string }> | null;
+      if (cardAttachments) {
+        for (const ta of cardAttachments) {
+          if (!ta.url || !ta.url.startsWith("http")) continue;
+          await prisma.attachment.create({
+            data: {
+              filename: ta.name || ta.url,
+              url: ta.url,
+              size: 0,
+              mimeType: "text/x-uri",
+              taskId: newTask.id,
+            },
+          });
+        }
+      }
+
+      // Pull checklists → subtasks from the card
+      const cardChecklists = await trelloFetch(
+        `/cards/${card.id}/checklists`
+      ) as Array<{ id: string; checkItems: Array<{ id: string; name: string; state: string }> }> | null;
+      if (cardChecklists && cardChecklists.length > 0) {
+        const checklist = cardChecklists[0];
+        // Store checklist ID on the sprint task
+        await prisma.sprintTask.update({
+          where: { id: newSprintTask.id },
+          data: { trelloChecklistId: checklist.id },
+        });
+        let subOrder = 0;
+        for (const item of checklist.checkItems) {
+          await prisma.task.create({
+            data: {
+              title: item.name,
+              sectionId: defaultSection.id,
+              parentId: newTask.id,
+              order: subOrder++,
+              completed: item.state === "complete",
+              completedAt: item.state === "complete" ? new Date() : null,
+              trelloCheckItemId: item.id,
+            },
+          });
+        }
+      }
+
+      // Pull assignees (best-effort name matching from card members)
+      const cardMembers = await trelloFetch(
+        `/cards/${card.id}/members`
+      ) as Array<{ fullName: string }> | null;
+      if (cardMembers) {
+        for (const m of cardMembers) {
+          await prisma.taskAssignee.create({
+            data: { name: m.fullName, taskId: newTask.id },
+          });
+        }
+      }
+
+      changes.push({
+        type: "rename",
+        taskId: newTask.id,
+        taskTitle: card.name,
+        newTitle: card.name,
+      });
+    }
   }
 
   return changes;
@@ -968,8 +1140,21 @@ export function isTrelloConfigured(): boolean {
 
 /**
  * Fire-and-forget wrapper — logs errors but never throws.
- * Use this to call sync functions from API routes without blocking the response.
+ * @deprecated Use `after()` from `next/server` instead in route handlers.
  */
 export function fireAndForget(fn: () => Promise<unknown>): void {
   fn().catch((err) => console.warn("[Trello] background sync error:", err));
+}
+
+/**
+ * Wrapper for sync functions to be used inside `after()` — logs errors but never throws.
+ */
+export function trelloSync(fn: () => Promise<unknown>): () => Promise<void> {
+  return async () => {
+    try {
+      await fn();
+    } catch (err) {
+      console.warn("[Trello] background sync error:", err);
+    }
+  };
 }

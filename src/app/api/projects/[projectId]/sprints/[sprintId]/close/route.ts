@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
-import { closeTrelloBoard, syncAllCards, fireAndForget } from "@/lib/trello";
+import { after } from "next/server";
+import { closeTrelloBoard, syncAllCards, trelloSync } from "@/lib/trello";
 
 export async function POST(
   _request: NextRequest,
@@ -84,14 +85,14 @@ export async function POST(
   });
 
   if (sprint.trelloBoardId) {
-    fireAndForget(async () => {
+    after(trelloSync(async () => {
       await closeTrelloBoard(sprintId);
       // Sync cards on the new sprint if tasks were carried over
       const nextSprint = await prisma.sprint.findFirst({
         where: { projectId, number: sprint.number + 1 },
       });
       if (nextSprint?.trelloBoardId) await syncAllCards(nextSprint.id);
-    });
+    }));
   }
 
   return NextResponse.json(closedSprint);

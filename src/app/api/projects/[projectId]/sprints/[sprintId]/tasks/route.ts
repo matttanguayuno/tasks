@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
-import { syncCard, archiveCard, fireAndForget } from "@/lib/trello";
+import { after } from "next/server";
+import { syncCard, archiveCard, trelloSync } from "@/lib/trello";
 
 export async function POST(
   request: NextRequest,
@@ -50,9 +51,9 @@ export async function POST(
   // Only sync to Trello if this sprint has Trello enabled
   const sprint = await prisma.sprint.findUnique({ where: { id: sprintId } });
   if (sprint?.trelloBoardId) {
-    fireAndForget(async () => {
+    after(trelloSync(async () => {
       for (const st of created) await syncCard(st.id);
-    });
+    }));
   }
 
   return NextResponse.json(created, { status: 201 });
@@ -79,13 +80,9 @@ export async function DELETE(
     where: { sprintId, taskId },
   });
 
-  const hasAnyTrelloCards = sprintTasks.some(st => st.trelloCardId);
-  if (hasAnyTrelloCards) {
-    fireAndForget(async () => {
-      for (const st of sprintTasks) {
-        if (st.trelloCardId) await archiveCard(st.trelloCardId);
-      }
-    });
+  // Archive Trello cards synchronously so removal is reliable
+  for (const st of sprintTasks) {
+    if (st.trelloCardId) await archiveCard(st.trelloCardId);
   }
 
   return NextResponse.json({ success: true });

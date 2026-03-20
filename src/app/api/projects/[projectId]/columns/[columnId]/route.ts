@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
-import { syncColumnName, archiveList, fireAndForget } from "@/lib/trello";
+import { after } from "next/server";
+import { syncColumnName, archiveList, trelloSync } from "@/lib/trello";
 
 export async function PATCH(
   request: NextRequest,
@@ -18,7 +19,7 @@ export async function PATCH(
   });
 
   if (body.name !== undefined) {
-    fireAndForget(() => syncColumnName(columnId));
+    after(trelloSync(() => syncColumnName(columnId)));
   }
 
   return NextResponse.json(column);
@@ -32,7 +33,7 @@ export async function DELETE(
   const column = await prisma.boardColumn.findUnique({ where: { id: columnId } });
   await prisma.boardColumn.delete({ where: { id: columnId } });
   if (column?.trelloListId) {
-    fireAndForget(() => archiveList(column.trelloListId!));
+    after(trelloSync(() => archiveList(column.trelloListId!)));
   }
   return NextResponse.json({ success: true });
 }
