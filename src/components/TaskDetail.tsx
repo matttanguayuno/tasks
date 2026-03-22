@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect, forwardRef, useImperativeHandle } from "react";
-import { LinkifiedText, LinkPopup } from "./LinkifiedText";
+import { LinkifiedText, LinkPopup, parseSegments } from "./LinkifiedText";
 import {
   SortableContext,
   verticalListSortingStrategy,
@@ -257,11 +257,15 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
   const [dragging, setDragging] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [confirmDeleteSelf, setConfirmDeleteSelf] = useState(false);
-  const [hyperlinkDialog, setHyperlinkDialog] = useState<{ url: string } | null>(null);
+  const [hyperlinkPrompt, setHyperlinkPrompt] = useState<{ text: string; url: string; existingLinkText?: string; existingLinkUrl?: string } | null>(null);
   const [linkPopup, setLinkPopup] = useState<{ url: string; rect: DOMRect } | null>(null);
+  const titleTextareaRef = useRef<HTMLTextAreaElement>(null);
   const [addingLink, setAddingLink] = useState(false);
   const [linkName, setLinkName] = useState("");
   const [linkUrl, setLinkUrl] = useState("");
+  const [editingAttachment, setEditingAttachment] = useState<string | null>(null);
+  const [editAttName, setEditAttName] = useState("");
+  const [editAttUrl, setEditAttUrl] = useState("");
   const dragCounter = useRef(0);
   // Keep a ref to onRefresh so async updateField always calls the latest version
   const onRefreshRef = useRef(onRefresh);
@@ -355,23 +359,34 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
     return result?.url ?? null;
   }, [task.id]);
 
-  // Ctrl+K to set hyperlink on the task (works even while editing)
-  const hyperlinkDialogRef = useRef(hyperlinkDialog);
-  hyperlinkDialogRef.current = hyperlinkDialog;
+  // Ctrl+K to add/edit hyperlink as markdown link in title
+  const hyperlinkPromptRef = useRef(hyperlinkPrompt);
+  hyperlinkPromptRef.current = hyperlinkPrompt;
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "k") {
         e.preventDefault();
         e.stopImmediatePropagation();
-        if (!hyperlinkDialogRef.current) {
-          setLinkPopup(null);
-          setHyperlinkDialog({ url: task.hyperlink || "" });
+        if (hyperlinkPromptRef.current) return;
+        setLinkPopup(null);
+
+        // Find an existing markdown link in the title to pre-populate
+        const segments = parseSegments(title);
+        const existingLink = segments.find(s => s.type === 'link');
+
+        if (task.hyperlink) {
+          // Convert task.hyperlink to markdown link prompt
+          setHyperlinkPrompt({ text: title, url: task.hyperlink, existingLinkText: title, existingLinkUrl: task.hyperlink });
+        } else if (existingLink) {
+          setHyperlinkPrompt({ text: existingLink.text, url: existingLink.url, existingLinkText: existingLink.text, existingLinkUrl: existingLink.url });
+        } else {
+          setHyperlinkPrompt({ text: title, url: "" });
         }
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [task.hyperlink]);
+  }, [task.hyperlink, title]);
 
   const handleDragEnter = (e: React.DragEvent) => {
     e.preventDefault();
@@ -416,6 +431,78 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
   const handleTitleBlur = () => {
     if (title.trim() && title !== task.title) {
       updateField("title", title.trim());
+    }
+  };
+
+  const applyHyperlinkPrompt = async () => {
+    if (!hyperlinkPrompt) return;
+    const { text, url, existingLinkText, existingLinkUrl } = hyperlinkPrompt;
+    const trimmedUrl = url.trim();
+    if (!trimmedUrl) {
+      setHyperlinkPrompt(null);
+      return;
+    }
+
+    const taskId = task.id;
+    const oldTitle = task.title;
+    const oldHyperlink = task.hyperlink;
+    let newTitle: string;
+
+    if (task.hyperlink && existingLinkUrl) {
+      // Converting from task.hyperlink to inline markdown link
+      newTitle = `[${text}](${trimmedUrl})`;
+    } else if (existingLinkText && existingLinkUrl) {
+      // Editing an existing markdown link in the title
+      const oldMarkdown = `[${existingLinkText}](${existingLinkUrl})`;
+      const newMarkdown = `[${text}](${trimmedUrl})`;
+      newTitle = title.replace(oldMarkdown, newMarkdown);
+    } else {
+      // Creating a new markdown link
+      if (text === title) {
+        newTitle = `[${text}](${trimmedUrl})`;
+      } else {
+        newTitle = title.replace(text, `[${text}](${trimmedUrl})`);
+      }
+    }
+
+    setTitle(newTitle);
+    await api.tasks.update(taskId, { title: newTitle, hyperlink: null });
+    pushAction?.({
+      undo: async () => { await api.tasks.update(taskId, { title: oldTitle, hyperlink: oldHyperlink }); },
+      redo: async () => { await api.tasks.update(taskId, { title: newTitle, hyperlink: null }); },
+    });
+    onRefreshRef.current();
+    setHyperlinkPrompt(null);
+    setEditingTitle(false);
+  };
+
+  const removeHyperlinkFromTitle = async () => {
+    if (!hyperlinkPrompt) return;
+    const taskId = task.id;
+    const oldTitle = task.title;
+    const oldHyperlink = task.hyperlink;
+
+    if (task.hyperlink) {
+      await api.tasks.update(taskId, { hyperlink: null });
+      pushAction?.({
+        undo: async () => { await api.tasks.update(taskId, { hyperlink: oldHyperlink }); },
+        redo: async () => { await api.tasks.update(taskId, { hyperlink: null }); },
+      });
+      onRefreshRef.current();
+      return;
+    }
+
+    const { existingLinkText, existingLinkUrl } = hyperlinkPrompt;
+    if (existingLinkText && existingLinkUrl) {
+      const oldMarkdown = `[${existingLinkText}](${existingLinkUrl})`;
+      const newTitle = title.replace(oldMarkdown, existingLinkText);
+      setTitle(newTitle);
+      await api.tasks.update(taskId, { title: newTitle });
+      pushAction?.({
+        undo: async () => { await api.tasks.update(taskId, { title: oldTitle }); },
+        redo: async () => { await api.tasks.update(taskId, { title: newTitle }); },
+      });
+      onRefreshRef.current();
     }
   };
 
@@ -669,20 +756,65 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
               e.target.style.height = "auto";
               e.target.style.height = e.target.scrollHeight + "px";
             }}
-            onBlur={() => { handleTitleBlur(); setEditingTitle(false); }}
-            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); } if (e.key === "Escape") { setTitle(task.title); setEditingTitle(false); } }}
+            onBlur={() => { if (!hyperlinkPrompt) { handleTitleBlur(); setEditingTitle(false); } }}
+            onKeyDown={(e) => {
+              if ((e.ctrlKey || e.metaKey) && e.key === "k") {
+                e.preventDefault();
+                e.stopPropagation();
+                const ta = titleTextareaRef.current;
+                if (ta && ta.selectionStart !== ta.selectionEnd) {
+                  const selStart = ta.selectionStart;
+                  const selEnd = ta.selectionEnd;
+                  const selText = title.substring(selStart, selEnd);
+                  setHyperlinkPrompt({ text: selText, url: "" });
+                }
+                return;
+              }
+              if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); }
+              if (e.key === "Escape") { setTitle(task.title); setEditingTitle(false); }
+            }}
             rows={1}
-            ref={(el) => { if (el) { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; el.focus(); } }}
+            ref={(el) => {
+              (titleTextareaRef as React.MutableRefObject<HTMLTextAreaElement | null>).current = el;
+              if (el) { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; el.focus(); }
+            }}
             className={`w-full text-lg font-semibold border-none outline-none bg-transparent resize-none overflow-hidden ${task.completed ? "line-through text-gray-400" : "text-gray-900"}`}
           />
           </div>
         ) : (
           <div
-            onClick={(e) => { if (!(e.target as HTMLElement).closest('a') && !(e.target as HTMLElement).closest('button')) setEditingTitle(true); }}
+            onClick={async (e) => {
+              if (!(e.target as HTMLElement).closest('a') && !(e.target as HTMLElement).closest('button')) {
+                if (task.hyperlink) {
+                  // Auto-convert task.hyperlink to inline markdown link
+                  const taskId = task.id;
+                  const oldTitle = task.title;
+                  const oldHyperlink = task.hyperlink;
+                  const newTitle = `[${title}](${task.hyperlink})`;
+                  setTitle(newTitle);
+                  await api.tasks.update(taskId, { title: newTitle, hyperlink: null });
+                  pushAction?.({
+                    undo: async () => { await api.tasks.update(taskId, { title: oldTitle, hyperlink: oldHyperlink }); },
+                    redo: async () => { await api.tasks.update(taskId, { title: newTitle, hyperlink: null }); },
+                  });
+                  onRefreshRef.current();
+                }
+                setEditingTitle(true);
+              }
+            }}
             onContextMenu={(e) => {
               if ((e.target as HTMLElement).closest('a')) return;
               e.preventDefault();
-              setHyperlinkDialog({ url: task.hyperlink || "" });
+              // Right-click shows hyperlink prompt for the full title
+              const segments = parseSegments(title);
+              const existingLink = segments.find(s => s.type === 'link');
+              if (task.hyperlink) {
+                setHyperlinkPrompt({ text: title, url: task.hyperlink, existingLinkText: title, existingLinkUrl: task.hyperlink });
+              } else if (existingLink) {
+                setHyperlinkPrompt({ text: existingLink.text, url: existingLink.url, existingLinkText: existingLink.text, existingLinkUrl: existingLink.url });
+              } else {
+                setHyperlinkPrompt({ text: title, url: "" });
+              }
             }}
             className="cursor-text group/title flex items-start gap-2"
           >
@@ -725,10 +857,33 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
                 >
                   {title}
                 </a>
-                {linkPopup && <LinkPopup url={linkPopup.url} anchorRect={linkPopup.rect} onClose={() => setLinkPopup(null)} />}
+                {linkPopup && <LinkPopup url={linkPopup.url} anchorRect={linkPopup.rect} onClose={() => setLinkPopup(null)} onEdit={(url) => {
+                  setHyperlinkPrompt({ text: title, url, existingLinkText: title, existingLinkUrl: url });
+                }} onRemove={async () => {
+                  const taskId = task.id;
+                  const oldHyperlink = task.hyperlink;
+                  await api.tasks.update(taskId, { hyperlink: null });
+                  pushAction?.({
+                    undo: async () => { await api.tasks.update(taskId, { hyperlink: oldHyperlink }); },
+                    redo: async () => { await api.tasks.update(taskId, { hyperlink: null }); },
+                  });
+                  onRefreshRef.current();
+                }} linkText={title} />}
                 </>
               ) : (
-                <LinkifiedText text={title} className="text-lg font-semibold text-gray-900 break-words" />
+                <LinkifiedText
+                  text={title}
+                  className="text-lg font-semibold text-gray-900 break-words"
+                  onEditLink={(oldUrl, oldText) => {
+                    setHyperlinkPrompt({ text: oldText || title, url: oldUrl, existingLinkText: oldText || title, existingLinkUrl: oldUrl });
+                  }}
+                  onRemoveLink={(url, linkText) => {
+                    const oldMarkdown = `[${linkText}](${url})`;
+                    const newTitle = title.replace(oldMarkdown, linkText);
+                    setTitle(newTitle);
+                    updateField("title", newTitle);
+                  }}
+                />
               )}
             </div>
           </div>
@@ -904,6 +1059,52 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
             <div className="space-y-1 mb-2">
               {task.attachments.map((att) => {
                 const isLink = att.mimeType === "text/x-uri";
+                const isEditing = editingAttachment === att.id;
+                if (isLink && isEditing) {
+                  return (
+                    <div key={att.id} className="px-2 py-1.5 bg-gray-50 rounded text-sm space-y-1.5">
+                      <input
+                        type="text"
+                        value={editAttName}
+                        onChange={(e) => setEditAttName(e.target.value)}
+                        placeholder="Display name"
+                        className="w-full px-2 py-1 text-sm border border-gray-200 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        autoFocus
+                        onKeyDown={async (e) => {
+                          if (e.key === "Escape") setEditingAttachment(null);
+                          if (e.key === "Enter") {
+                            await api.attachments.update(task.id, att.id, { name: editAttName.trim() || att.filename, url: editAttUrl.trim() || att.url });
+                            setEditingAttachment(null); onRefresh();
+                          }
+                        }}
+                      />
+                      <input
+                        type="url"
+                        value={editAttUrl}
+                        onChange={(e) => setEditAttUrl(e.target.value)}
+                        placeholder="https://..."
+                        className="w-full px-2 py-1 text-sm border border-gray-200 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        onKeyDown={async (e) => {
+                          if (e.key === "Escape") setEditingAttachment(null);
+                          if (e.key === "Enter") {
+                            await api.attachments.update(task.id, att.id, { name: editAttName.trim() || att.filename, url: editAttUrl.trim() || att.url });
+                            setEditingAttachment(null); onRefresh();
+                          }
+                        }}
+                      />
+                      <div className="flex justify-end gap-2">
+                        <button onClick={() => setEditingAttachment(null)} className="px-2 py-1 text-xs text-gray-500 hover:bg-gray-200 rounded">Cancel</button>
+                        <button
+                          onClick={async () => {
+                            await api.attachments.update(task.id, att.id, { name: editAttName.trim() || att.filename, url: editAttUrl.trim() || att.url });
+                            setEditingAttachment(null); onRefresh();
+                          }}
+                          className="px-2 py-1 text-xs text-white bg-indigo-600 hover:bg-indigo-700 rounded"
+                        >Save</button>
+                      </div>
+                    </div>
+                  );
+                }
                 return (
                 <div key={att.id} className="flex items-center gap-2 px-2 py-1.5 bg-gray-50 rounded text-sm group">
                   {isLink ? (
@@ -919,6 +1120,17 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
                     {att.filename}
                   </a>
                   {!isLink && <span className="text-xs text-gray-400">{formatFileSize(att.size)}</span>}
+                  {isLink && (
+                    <button
+                      onClick={() => { setEditingAttachment(att.id); setEditAttName(att.filename); setEditAttUrl(att.url); }}
+                      className="p-0.5 opacity-0 group-hover:opacity-100 hover:text-indigo-500 text-gray-400"
+                      title="Edit link"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                      </svg>
+                    </button>
+                  )}
                   <button
                     onClick={() => setConfirmDelete(att.id)}
                     className="p-0.5 opacity-0 group-hover:opacity-100 hover:text-red-500 text-gray-400"
@@ -1112,35 +1324,44 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
         </div>
       </div>
       {/* Hyperlink dialog */}
-      {hyperlinkDialog && (
+      {hyperlinkPrompt && (
         <div
           className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40"
-          onClick={() => setHyperlinkDialog(null)}
+          onClick={() => setHyperlinkPrompt(null)}
         >
           <div className="bg-white rounded-xl shadow-xl px-6 py-5 w-96 max-w-[90vw]" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-sm font-semibold text-gray-900 mb-3">Set hyperlink</h3>
+            <h3 className="text-sm font-semibold text-gray-900 mb-3">
+              {hyperlinkPrompt.existingLinkUrl ? "Edit hyperlink" : "Add hyperlink"}
+            </h3>
+            <label className="text-xs text-gray-500 mb-1 block">Text</label>
+            <input
+              type="text"
+              value={hyperlinkPrompt.text}
+              onChange={(e) => setHyperlinkPrompt({ ...hyperlinkPrompt, text: e.target.value })}
+              placeholder="Link text"
+              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent mb-3"
+            />
+            <label className="text-xs text-gray-500 mb-1 block">URL</label>
             <input
               autoFocus
               type="url"
-              value={hyperlinkDialog.url}
-              onChange={(e) => setHyperlinkDialog({ url: e.target.value })}
+              value={hyperlinkPrompt.url}
+              onChange={(e) => setHyperlinkPrompt({ ...hyperlinkPrompt, url: e.target.value })}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
-                  const url = hyperlinkDialog.url.trim() || null;
-                  updateField("hyperlink", url);
-                  setHyperlinkDialog(null);
+                  applyHyperlinkPrompt();
                 }
-                if (e.key === "Escape") setHyperlinkDialog(null);
+                if (e.key === "Escape") setHyperlinkPrompt(null);
               }}
               placeholder="https://..."
               className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
             />
             <div className="flex justify-end gap-2 mt-4">
-              {hyperlinkDialog.url && (
+              {hyperlinkPrompt.existingLinkUrl && (
                 <button
                   onClick={() => {
-                    updateField("hyperlink", null);
-                    setHyperlinkDialog(null);
+                    removeHyperlinkFromTitle();
+                    setHyperlinkPrompt(null);
                   }}
                   className="px-3 py-1.5 text-sm text-red-600 bg-red-50 rounded-lg hover:bg-red-100 transition-colors mr-auto"
                 >
@@ -1148,17 +1369,13 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
                 </button>
               )}
               <button
-                onClick={() => setHyperlinkDialog(null)}
+                onClick={() => setHyperlinkPrompt(null)}
                 className="px-3 py-1.5 text-sm text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
               >
                 Cancel
               </button>
               <button
-                onClick={() => {
-                  const url = hyperlinkDialog.url.trim() || null;
-                  updateField("hyperlink", url);
-                  setHyperlinkDialog(null);
-                }}
+                onClick={() => applyHyperlinkPrompt()}
                 className="px-3 py-1.5 text-sm text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors"
               >
                 Save

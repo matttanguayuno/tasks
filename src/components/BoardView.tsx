@@ -120,10 +120,7 @@ function DroppableColumn({
       {/* Column header */}
       <div className="flex items-center justify-between px-3 py-2">
         <div className="flex items-center gap-2">
-          <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide">{column.name}</h3>
-          <span className="text-xs font-medium text-gray-500 bg-gray-200 px-1.5 py-0.5 rounded-full min-w-[20px] text-center">
-            {sprintTasks.length}
-          </span>
+          <h3 className="text-sm font-bold text-white uppercase tracking-wide">{column.name}</h3>
         </div>
       </div>
 
@@ -593,7 +590,7 @@ export default function BoardView({
   return (
     <div className="flex flex-col h-full">
       {/* Sprint header bar */}
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-700 bg-gray-900 shrink-0 flex-wrap">
+      <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-700 shrink-0 flex-wrap" style={{ backgroundColor: '#026AA7' }}>
         {/* Sprint selector */}
         <select
           value={selectedSprintId || ""}
@@ -609,10 +606,10 @@ export default function BoardView({
 
         {/* Date range */}
         {selectedSprint && (
-          <span className="text-xs text-gray-400">
+          <span className="text-xs text-white/70">
             {formatDateRange(selectedSprint.startDate, selectedSprint.endDate)}
             {selectedSprint.status === "CLOSED" && (
-              <span className="ml-2 text-xs text-gray-500 bg-gray-800 px-1.5 py-0.5 rounded">
+              <span className="ml-2 text-xs text-white/50 bg-white/10 px-1.5 py-0.5 rounded">
                 Closed
               </span>
             )}
@@ -624,8 +621,8 @@ export default function BoardView({
         {/* Sprint actions */}
         <button
           onClick={() => setShowTaskPanel((v) => !v)}
-          className={`text-xs px-2 py-1 rounded hover:bg-gray-800 ${
-            showTaskPanel ? "text-indigo-400 hover:text-indigo-300" : "text-gray-400 hover:text-white"
+          className={`text-xs px-2 py-1 rounded hover:bg-white/20 ${
+            showTaskPanel ? "text-indigo-200 hover:text-white" : "text-white/80 hover:text-white"
           }`}
           title={showTaskPanel ? "Hide task list" : "Show task list to drag tasks onto the board"}
         >
@@ -634,7 +631,7 @@ export default function BoardView({
 
         <button
           onClick={handleCreateSprint}
-          className="text-xs text-gray-400 hover:text-white px-2 py-1 rounded hover:bg-gray-800"
+          className="text-xs text-white/80 hover:text-white px-2 py-1 rounded hover:bg-white/20"
           title="Create next sprint"
         >
           + Sprint
@@ -643,7 +640,7 @@ export default function BoardView({
         {currentSprint?.status === "ACTIVE" && (
           <button
             onClick={handleCloseSprint}
-            className="text-xs text-orange-400 hover:text-orange-300 px-2 py-1 rounded hover:bg-gray-800"
+            className="text-xs text-orange-300 hover:text-orange-200 px-2 py-1 rounded hover:bg-white/20"
             title="Close sprint and carry over incomplete tasks"
           >
             Close Sprint
@@ -652,7 +649,7 @@ export default function BoardView({
 
         <button
           onClick={() => setShowSprintSettings(true)}
-          className="text-xs text-gray-400 hover:text-white px-2 py-1 rounded hover:bg-gray-800"
+          className="text-xs text-white/80 hover:text-white px-2 py-1 rounded hover:bg-white/20"
           title="Board settings"
         >
           ⚙ Settings
@@ -748,7 +745,7 @@ export default function BoardView({
           {/* Board columns */}
           <div
             ref={boardRef}
-            className="flex-1 overflow-x-auto overflow-y-hidden p-4"
+            className="flex-1 overflow-x-auto overflow-y-hidden p-4" style={{ backgroundColor: '#0079BF' }}
             tabIndex={0}
             onClick={(e) => {
               if (selectedTaskId && !(e.target as HTMLElement).closest("[data-board-card]")) {
@@ -762,7 +759,7 @@ export default function BoardView({
               }
             }}
           >
-            <div className="flex divide-x divide-gray-200 h-full">
+            <div className="flex divide-x-4 divide-white/20 h-full">
               {columns.map((col) => (
                 <DroppableColumn
                   key={col.id}

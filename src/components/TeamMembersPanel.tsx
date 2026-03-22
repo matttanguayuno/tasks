@@ -13,7 +13,7 @@ interface TeamMember {
   order: number;
 }
 
-export default function TeamMembersPanel() {
+export default function TeamMembersPanel({ onClose }: { onClose?: () => void }) {
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -87,12 +87,25 @@ export default function TeamMembersPanel() {
           <h2 className="font-semibold text-gray-900">Team Members</h2>
           <span className="text-xs text-gray-400">({members.length})</span>
         </div>
-        <button
-          onClick={addMember}
-          className="px-2.5 py-1 text-xs font-medium text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors"
-        >
-          + Add
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={addMember}
+            className="px-2.5 py-1 text-xs font-medium text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors"
+          >
+            + Add
+          </button>
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="ml-1 p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
+              title="Hide panel"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M6 5l7 7-7 7" />
+              </svg>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Members list */}

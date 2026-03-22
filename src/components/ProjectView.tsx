@@ -1902,7 +1902,14 @@ export function ProjectView({ project, onRefresh, pushAction, initialTaskId, onI
                       setContextMenu({ x: e.clientX, y: e.clientY, task });
                     }}
                     onUpdate={async (data) => {
+                      const oldData: Record<string, unknown> = {};
+                      if (data.title !== undefined) oldData.title = task.title;
+                      if (data.hyperlink !== undefined) oldData.hyperlink = task.hyperlink;
                       await api.tasks.update(task.id, data);
+                      pushAction?.({
+                        undo: async () => { await api.tasks.update(task.id, oldData); onRefresh(); },
+                        redo: async () => { await api.tasks.update(task.id, data); onRefresh(); },
+                      });
                       if (selectingTaskIdRef.current === task.id) {
                         const full = await api.tasks.get(task.id);
                         if (selectingTaskIdRef.current === task.id) {
@@ -2296,7 +2303,7 @@ interface SortableTaskRowProps {
   onSelect: (e: React.MouseEvent) => void;
   onToggleComplete: () => void;
   onDelete: () => void;
-  onUpdate: (data: { title: string }) => void;
+  onUpdate: (data: { title?: string; hyperlink?: string | null }) => void;
   onContextMenu?: (e: React.MouseEvent) => void;
   showPriorityColumn?: boolean;
   showDueDateColumn?: boolean;

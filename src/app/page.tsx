@@ -29,6 +29,8 @@ export default function Home() {
   const [boardSelectedTaskId, setBoardSelectedTaskId] = useState<string | null>(null);
   const [boardSelectedTask, setBoardSelectedTask] = useState<TaskWithRelations | null>(null);
   const [boardRefreshKey, setBoardRefreshKey] = useState(0);
+  const [boardPanelCollapsed, setBoardPanelCollapsed] = useState(false);
+  const [boardSidePanelHidden, setBoardSidePanelHidden] = useState(false);
 
   const loadProjects = useCallback(async () => {
     const data = await api.projects.list();
@@ -384,35 +386,68 @@ export default function Home() {
                   sprintDuration={activeProject.sprintDuration}
                   sprintStartDay={activeProject.sprintStartDay}
                   sprintStartDate={activeProject.sprintStartDate}
-                  onSelectTask={(task) => setBoardSelectedTaskId(task.id)}
-                  onDeselect={() => { setBoardSelectedTaskId(null); setBoardSelectedTask(null); }}
+                  onSelectTask={(task) => {
+                    if (task.id === boardSelectedTaskId && !boardPanelCollapsed) {
+                      setBoardPanelCollapsed(true);
+                    } else {
+                      setBoardSelectedTaskId(task.id);
+                      setBoardPanelCollapsed(false);
+                    }
+                  }}
+                  onDeselect={() => { setBoardSelectedTaskId(null); setBoardSelectedTask(null); setBoardPanelCollapsed(false); }}
                   selectedTaskId={boardSelectedTaskId}
                   onRefresh={refreshProject}
                   refreshKey={boardRefreshKey}
                 />
               </div>
-              {boardSelectedTask ? (
-                <TaskDetail
-                  task={boardSelectedTask}
-                  projectId={activeProject.id}
-                  onClose={() => { setBoardSelectedTaskId(null); setBoardSelectedTask(null); }}
-                  onRefresh={() => {
-                    if (boardSelectedTaskId) {
-                      api.tasks.get(boardSelectedTaskId).then((t) => setBoardSelectedTask(t as TaskWithRelations)).catch(() => {});
-                    }
-                    setBoardRefreshKey((k) => k + 1);
-                    refreshProject();
-                  }}
-                  onSelectTask={async (taskId) => {
-                    setBoardSelectedTaskId(taskId);
-                    const full = await api.tasks.get(taskId);
-                    setBoardSelectedTask(full as TaskWithRelations);
-                  }}
-                  storageKey="boardDetailPanelWidth"
-                  defaultWidth="md:w-[380px] lg:w-[420px] xl:w-[480px]"
-                />
+              {boardSelectedTask && !boardPanelCollapsed ? (
+                <div className="relative">
+                  <TaskDetail
+                    task={boardSelectedTask}
+                    projectId={activeProject.id}
+                    onClose={() => setBoardPanelCollapsed(true)}
+                    onRefresh={() => {
+                      if (boardSelectedTaskId) {
+                        api.tasks.get(boardSelectedTaskId).then((t) => setBoardSelectedTask(t as TaskWithRelations)).catch(() => {});
+                      }
+                      setBoardRefreshKey((k) => k + 1);
+                      refreshProject();
+                    }}
+                    onSelectTask={async (taskId) => {
+                      setBoardSelectedTaskId(taskId);
+                      const full = await api.tasks.get(taskId);
+                      setBoardSelectedTask(full as TaskWithRelations);
+                    }}
+                    storageKey="boardDetailPanelWidth"
+                    defaultWidth="md:w-[380px] lg:w-[420px] xl:w-[480px]"
+                  />
+                </div>
+              ) : boardSelectedTask && boardPanelCollapsed ? (
+                <div className="border-l border-gray-200 bg-gray-50 flex flex-col items-center py-3 px-1">
+                  <button
+                    onClick={() => setBoardPanelCollapsed(false)}
+                    className="p-1 hover:bg-gray-200 rounded text-gray-400 hover:text-gray-600 transition-colors"
+                    title="Expand task panel"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7M18 19l-7-7 7-7" />
+                    </svg>
+                  </button>
+                </div>
+              ) : !boardSidePanelHidden ? (
+                <TeamMembersPanel onClose={() => setBoardSidePanelHidden(true)} />
               ) : (
-                <TeamMembersPanel />
+                <div className="border-l border-gray-200 bg-gray-50 flex flex-col items-center py-3 px-1">
+                  <button
+                    onClick={() => setBoardSidePanelHidden(false)}
+                    className="p-1 hover:bg-gray-200 rounded text-gray-400 hover:text-gray-600 transition-colors"
+                    title="Show team panel"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7M18 19l-7-7 7-7" />
+                    </svg>
+                  </button>
+                </div>
               )}
             </div>
           ) : (

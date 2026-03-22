@@ -8,7 +8,7 @@ const MD_LINK_REGEX = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/;
 
 type Segment = { type: 'text'; text: string } | { type: 'link'; text: string; url: string };
 
-function parseSegments(text: string): Segment[] {
+export function parseSegments(text: string): Segment[] {
   const segments: Segment[] = [];
   let remaining = text;
   while (remaining.length > 0) {
@@ -43,9 +43,12 @@ interface LinkPopupProps {
   url: string;
   anchorRect: DOMRect;
   onClose: () => void;
+  onEdit?: (url: string, text: string) => void;
+  onRemove?: (url: string, text: string) => void;
+  linkText?: string;
 }
 
-export function LinkPopup({ url, anchorRect, onClose }: LinkPopupProps) {
+export function LinkPopup({ url, anchorRect, onClose, onEdit, onRemove, linkText }: LinkPopupProps) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -81,6 +84,28 @@ export function LinkPopup({ url, anchorRect, onClose }: LinkPopupProps) {
         </svg>
         <span className="truncate max-w-[250px]">{url}</span>
       </a>
+      {onEdit && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onClose(); onEdit(url, linkText || ""); }}
+          className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded transition-colors w-full"
+        >
+          <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+          </svg>
+          Edit link
+        </button>
+      )}
+      {onRemove && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onClose(); onRemove(url, linkText || ""); }}
+          className="flex items-center gap-2 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 rounded transition-colors w-full"
+        >
+          <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+          </svg>
+          Remove link
+        </button>
+      )}
     </div>
   );
 }
@@ -90,27 +115,29 @@ interface LinkifiedTextProps {
   className?: string;
   children?: React.ReactNode;
   interactive?: boolean;
+  onEditLink?: (oldText: string, oldUrl: string) => void;
+  onRemoveLink?: (url: string, text: string) => void;
 }
 
-export function LinkifiedText({ text, className, children, interactive = true }: LinkifiedTextProps) {
-  const [popup, setPopup] = useState<{ url: string; rect: DOMRect } | null>(null);
+export function LinkifiedText({ text, className, children, interactive = true, onEditLink, onRemoveLink }: LinkifiedTextProps) {
+  const [popup, setPopup] = useState<{ url: string; rect: DOMRect; text: string } | null>(null);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressUrl = useRef<string | null>(null);
 
   const handleClose = useCallback(() => setPopup(null), []);
 
-  const handleLinkClick = (e: React.MouseEvent, url: string) => {
+  const handleLinkClick = (e: React.MouseEvent, url: string, linkText: string) => {
     e.stopPropagation();
     // Left click without modifier: show popup
     const rect = (e.target as HTMLElement).getBoundingClientRect();
-    setPopup({ url, rect });
+    setPopup({ url, rect, text: linkText });
   };
 
-  const handleTouchStart = (url: string, e: React.TouchEvent) => {
+  const handleTouchStart = (url: string, linkText: string, e: React.TouchEvent) => {
     longPressUrl.current = url;
     longPressTimer.current = setTimeout(() => {
       const rect = (e.target as HTMLElement).getBoundingClientRect();
-      setPopup({ url, rect });
+      setPopup({ url, rect, text: linkText });
     }, 500);
   };
 
@@ -140,9 +167,9 @@ export function LinkifiedText({ text, className, children, interactive = true }:
                 return;
               }
               e.preventDefault();
-              if (interactive) handleLinkClick(e, seg.url);
+              if (interactive) handleLinkClick(e, seg.url, seg.text);
             }}
-            onTouchStart={(e) => handleTouchStart(seg.url, e)}
+            onTouchStart={(e) => handleTouchStart(seg.url, seg.text, e)}
             onTouchEnd={handleTouchEnd}
             onTouchCancel={handleTouchEnd}
           >
@@ -153,7 +180,7 @@ export function LinkifiedText({ text, className, children, interactive = true }:
         )
       )}
       {children}
-      {popup && <LinkPopup url={popup.url} anchorRect={popup.rect} onClose={handleClose} />}
+      {popup && <LinkPopup url={popup.url} anchorRect={popup.rect} onClose={handleClose} onEdit={onEditLink} onRemove={onRemoveLink} linkText={popup.text} />}
     </span>
   );
 }

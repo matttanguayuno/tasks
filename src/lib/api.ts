@@ -141,6 +141,12 @@ export const api = {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       }),
+    update: (taskId: string, attachmentId: string, data: { name?: string; url?: string }) =>
+      fetchJson<unknown>(`${API_BASE}/tasks/${taskId}/attachments/${attachmentId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      }),
     delete: (taskId: string, attachmentId: string) =>
       fetchJson<unknown>(`${API_BASE}/tasks/${taskId}/attachments/${attachmentId}`, {
         method: "DELETE",

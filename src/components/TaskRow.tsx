@@ -24,7 +24,7 @@ interface TaskRowProps {
   onSelect: (e: React.MouseEvent) => void;
   onToggleComplete: () => void;
   onDelete: () => void;
-  onUpdate: (data: { title: string }) => void;
+  onUpdate: (data: { title?: string; hyperlink?: string | null }) => void;
   onContextMenu?: (e: React.MouseEvent) => void;
   showPriorityColumn?: boolean;
   showDueDateColumn?: boolean;
@@ -80,12 +80,50 @@ export function TaskRow({ task, isSelected, isMultiSelected, onSelect, onToggleC
     if (!hyperlinkPrompt) return;
     const { selStart, selEnd, text, url } = hyperlinkPrompt;
     if (url.trim()) {
-      const before = editTitle.substring(0, selStart);
-      const after = editTitle.substring(selEnd);
-      setEditTitle(`${before}[${text}](${url.trim()})${after}`);
+      if (selStart === 0 && selEnd === 0 && text) {
+        // Editing an existing markdown link — find and replace it
+        const MD_LINK_RE = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
+        let newTitle = editTitle;
+        let match;
+        while ((match = MD_LINK_RE.exec(editTitle)) !== null) {
+          if (match[1] === text || match[2] === hyperlinkPrompt.url) {
+            newTitle = editTitle.substring(0, match.index) + `[${text}](${url.trim()})` + editTitle.substring(match.index + match[0].length);
+            break;
+          }
+        }
+        setEditTitle(newTitle);
+      } else {
+        const before = editTitle.substring(0, selStart);
+        const after = editTitle.substring(selEnd);
+        setEditTitle(`${before}[${text}](${url.trim()})${after}`);
+      }
     }
     setHyperlinkPrompt(null);
     setTimeout(() => inputRef.current?.focus(), 0);
+  };
+
+  const handleEditLink = (oldUrl: string, oldText: string) => {
+    // Enter edit mode with the hyperlink prompt pre-populated
+    if (task.hyperlink) {
+      const newTitle = `[${task.title}](${task.hyperlink})`;
+      setEditTitle(newTitle);
+      onUpdate({ title: newTitle, hyperlink: null });
+    }
+    setEditing(true);
+    setHyperlinkPrompt({ selStart: 0, selEnd: 0, text: oldText, url: oldUrl });
+  };
+
+  const handleRemoveLink = (url: string, linkText: string) => {
+    if (task.hyperlink) {
+      // Just clear the hyperlink field, keep title as-is
+      onUpdate({ hyperlink: null });
+    } else {
+      // Remove markdown link from title, keeping the text
+      const oldMarkdown = `[${linkText}](${url})`;
+      const newTitle = task.title.replace(oldMarkdown, linkText);
+      setEditTitle(newTitle);
+      onUpdate({ title: newTitle });
+    }
   };
 
   const handleClick = (e: React.MouseEvent) => {
@@ -99,17 +137,27 @@ export function TaskRow({ task, isSelected, isMultiSelected, onSelect, onToggleC
     } else if (isSelected) {
       // Don't enter edit mode when clicking a hyperlink — the popup will show instead
       if (!(e.target as HTMLElement).closest('a')) {
-        setEditing(true);
+        enterEditMode();
       }
     } else {
       onSelect(e);
     }
   };
 
+  const enterEditMode = () => {
+    if (task.hyperlink) {
+      // Auto-convert task.hyperlink to inline markdown link
+      const newTitle = `[${task.title}](${task.hyperlink})`;
+      setEditTitle(newTitle);
+      onUpdate({ title: newTitle, hyperlink: null });
+    }
+    setEditing(true);
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if ((e.key === "F2" || e.key === " ") && isSelected && !editing) {
       e.preventDefault();
-      setEditing(true);
+      enterEditMode();
     }
     if (e.key === "Delete" && isSelected && !editing) {
       e.preventDefault();
@@ -260,6 +308,8 @@ export function TaskRow({ task, isSelected, isMultiSelected, onSelect, onToggleC
               text={task.title}
               className={task.completed ? "text-gray-400" : "text-gray-800"}
               interactive={isSelected}
+              onEditLink={isSelected ? handleEditLink : undefined}
+              onRemoveLink={isSelected ? handleRemoveLink : undefined}
             />
           )}
           {(task.sprintTasks ?? []).filter((st) => st.sprint.status === "ACTIVE").map((st) => (
@@ -280,7 +330,7 @@ export function TaskRow({ task, isSelected, isMultiSelected, onSelect, onToggleC
               {completedSubtasks}/{subtasks.length}
             </span>
           )}
-          {linkPopup && <LinkPopup url={linkPopup.url} anchorRect={linkPopup.rect} onClose={() => setLinkPopup(null)} />}
+          {linkPopup && <LinkPopup url={linkPopup.url} anchorRect={linkPopup.rect} onClose={() => setLinkPopup(null)} onEdit={handleEditLink} onRemove={handleRemoveLink} linkText={task.title} />}
         </span>
       )}
 
