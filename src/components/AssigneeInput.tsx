@@ -124,7 +124,7 @@ export default function AssigneeInput({ taskId, assignees, onUpdate }: AssigneeI
           {assignees.map((assignee) => (
             <span
               key={assignee.id}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-100 text-xs text-gray-700"
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-100 text-xs text-gray-700 whitespace-nowrap"
             >
               <AssigneeInitials name={assignee.name} size="sm" />
               {assignee.name}

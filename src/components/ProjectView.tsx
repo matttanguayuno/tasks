@@ -2083,7 +2083,7 @@ export function ProjectView({ project, onRefresh, pushAction, initialTaskId, onI
               autoFocus
             />
             <div className="flex gap-2 mt-2">
-              <button onClick={handleCreateSection} className="px-3 py-1 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">
+              <button onClick={() => handleCreateSection()} className="px-3 py-1 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">
                 Add Section
               </button>
               <button onClick={() => setAddingSection(false)} className="px-3 py-1 text-sm text-gray-600 hover:bg-gray-200 rounded-lg">

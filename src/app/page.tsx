@@ -6,6 +6,7 @@ import { ProjectView } from "@/components/ProjectView";
 import { SearchResults } from "@/components/SearchResults";
 import { Dashboard } from "@/components/Dashboard";
 import BoardView from "@/components/BoardView";
+import LineageView from "@/components/LineageView";
 import TeamMembersPanel from "@/components/TeamMembersPanel";
 import { api } from "@/lib/api";
 import { useUndoRedo } from "@/hooks/useUndoRedo";
@@ -24,7 +25,7 @@ export default function Home() {
   const [hideCompleted, setHideCompleted] = useState(false);
   const [loading, setLoading] = useState(true);
   const searchRef = useRef<HTMLInputElement>(null);
-  const [viewMode, setViewMode] = useState<"list" | "board">("list");
+  const [viewMode, setViewMode] = useState<"list" | "board" | "lineage">("list");
   const [sprints, setSprints] = useState<Sprint[]>([]);
   const [boardSelectedTaskId, setBoardSelectedTaskId] = useState<string | null>(null);
   const [boardSelectedTask, setBoardSelectedTask] = useState<TaskWithRelations | null>(null);
@@ -307,22 +308,21 @@ export default function Home() {
             </div>
           )}
 
-          {/* Sprint / Board toggle buttons */}
+          {/* View toggle buttons */}
           {!isSearching && activeProject && (
             <div className="flex items-center gap-1 ml-2">
               <div className="w-px h-4 bg-gray-400/50 mx-1" />
-              {viewMode === "board" ? (
-                <button
-                  onClick={() => setViewMode("list")}
-                  className="px-2 py-1 rounded text-xs font-medium bg-gray-300 text-gray-700 hover:bg-gray-400/70 transition-colors"
-                  title="Switch to list view"
-                >
-                  ☰ Tasks
-                </button>
-              ) : sprints.length > 0 ? (
+              <button
+                onClick={() => setViewMode("list")}
+                className={`px-2 py-1 rounded text-xs font-medium transition-colors ${viewMode === "list" ? "bg-gray-300 text-gray-700" : "text-gray-500 hover:bg-gray-300"}`}
+                title="Switch to list view"
+              >
+                ☰ Tasks
+              </button>
+              {sprints.length > 0 ? (
                 <button
                   onClick={() => setViewMode("board")}
-                  className="px-2 py-1 rounded text-xs font-medium text-gray-500 hover:bg-gray-300 transition-colors"
+                  className={`px-2 py-1 rounded text-xs font-medium transition-colors ${viewMode === "board" ? "bg-gray-300 text-gray-700" : "text-gray-500 hover:bg-gray-300"}`}
                   title="Switch to board view"
                 >
                   ▦ Sprints
@@ -343,6 +343,13 @@ export default function Home() {
                   + Add Sprint
                 </button>
               )}
+              <button
+                onClick={() => setViewMode("lineage")}
+                className={`px-2 py-1 rounded text-xs font-medium transition-colors ${viewMode === "lineage" ? "bg-gray-300 text-gray-700" : "text-gray-500 hover:bg-gray-300"}`}
+                title="Switch to lineage view"
+              >
+                ◈ Lineage
+              </button>
             </div>
           )}
 
@@ -401,7 +408,7 @@ export default function Home() {
                 />
               </div>
               {boardSelectedTask && !boardPanelCollapsed ? (
-                <div className="relative">
+                <div className="relative h-full overflow-hidden">
                   <TaskDetail
                     task={boardSelectedTask}
                     projectId={activeProject.id}
@@ -447,6 +454,48 @@ export default function Home() {
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7M18 19l-7-7 7-7" />
                     </svg>
                   </button>
+                </div>
+              )}
+            </div>
+          ) : viewMode === "lineage" ? (
+            <div className="flex h-full overflow-hidden">
+              <div className="flex-1 overflow-hidden">
+                <LineageView
+                  projectId={activeProject.id}
+                  selectedTaskId={boardSelectedTaskId}
+                  onSelectTask={async (taskId) => {
+                    setBoardSelectedTaskId(taskId);
+                    setBoardPanelCollapsed(false);
+                    const full = await api.tasks.get(taskId);
+                    setBoardSelectedTask(full as TaskWithRelations);
+                  }}
+                  onDeselectTask={() => {
+                    setBoardSelectedTaskId(null);
+                    setBoardSelectedTask(null);
+                    setBoardPanelCollapsed(true);
+                  }}
+                />
+              </div>
+              {boardSelectedTask && !boardPanelCollapsed && (
+                <div className="relative h-full overflow-hidden">
+                  <TaskDetail
+                    task={boardSelectedTask}
+                    projectId={activeProject.id}
+                    onClose={() => { setBoardPanelCollapsed(true); setBoardSelectedTaskId(null); setBoardSelectedTask(null); }}
+                    onRefresh={async () => {
+                      if (boardSelectedTaskId) {
+                        api.tasks.get(boardSelectedTaskId).then((t) => setBoardSelectedTask(t as TaskWithRelations)).catch(() => {});
+                      }
+                      refreshProject();
+                    }}
+                    onSelectTask={async (taskId) => {
+                      setBoardSelectedTaskId(taskId);
+                      const full = await api.tasks.get(taskId);
+                      setBoardSelectedTask(full as TaskWithRelations);
+                    }}
+                    storageKey="lineageDetailPanelWidth"
+                    defaultWidth="md:w-[380px] lg:w-[420px] xl:w-[480px]"
+                  />
                 </div>
               )}
             </div>

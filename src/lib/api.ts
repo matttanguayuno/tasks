@@ -322,4 +322,34 @@ export const api = {
         body: JSON.stringify({ sprintId }),
       }),
   },
+
+  taskLinks: {
+    list: (taskId: string) =>
+      fetchJson<unknown[]>(`${API_BASE}/tasks/${taskId}/links`),
+    create: (taskId: string, targetTaskId: string, linkType: string = "RELATED") =>
+      fetchJson<unknown>(`${API_BASE}/tasks/${taskId}/links`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ targetTaskId, linkType }),
+      }),
+    delete: (taskId: string, linkId: string) =>
+      fetchJson<unknown>(`${API_BASE}/tasks/${taskId}/links/${linkId}`, {
+        method: "DELETE",
+      }),
+  },
+
+  lineage: {
+    get: (taskId: string) =>
+      fetchJson<unknown>(`${API_BASE}/tasks/${taskId}/lineage`),
+  },
+
+  taskCommits: {
+    list: (taskId: string) =>
+      fetchJson<unknown[]>(`${API_BASE}/tasks/${taskId}/commits`),
+  },
+
+  taskSprintHistory: {
+    list: (taskId: string) =>
+      fetchJson<unknown[]>(`${API_BASE}/tasks/${taskId}/sprint-history`),
+  },
 };

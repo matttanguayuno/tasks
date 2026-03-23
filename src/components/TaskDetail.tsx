@@ -80,7 +80,7 @@ function RequesterInput({ value, onChange }: { value: string; onChange: (val: st
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (!showDropdown || suggestions.length === 0) {
-      if (e.key === "Enter") { e.currentTarget.blur(); }
+      if (e.key === "Enter") { (e.currentTarget as HTMLElement).blur(); }
       return;
     }
     if (e.key === "ArrowDown") {
@@ -249,7 +249,7 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
   const [newSubtaskTitle, setNewSubtaskTitle] = useState("");
   const [selectedSubtaskId, setSelectedSubtaskId] = useState<string | null>(null);
   const [newComment, setNewComment] = useState("");
-  const commentEditorRef = useRef<{ clear: () => void } | null>(null);
+  const commentEditorRef = useRef<{ clear: () => void; setContent: (html: string) => void } | null>(null);
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [editCommentContent, setEditCommentContent] = useState("");
   const editCommentEditorRef = useRef<{ clear: () => void; setContent: (html: string) => void } | null>(null);
@@ -580,7 +580,7 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
   return (
     <div
       ref={panelRef}
-      className={`w-full border-l border-gray-200 bg-white flex flex-col overflow-hidden shrink-0 relative ${panelWidth === 0 ? defaultWidth : ""}`}
+      className={`w-full h-full border-l border-gray-200 bg-white flex flex-col overflow-hidden shrink-0 relative ${panelWidth === 0 ? defaultWidth : ""}`}
       style={panelWidth > 0 ? { width: panelWidth } : undefined}
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
@@ -726,7 +726,7 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 py-4 space-y-6">
+      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-4 py-4 space-y-6">
         {/* Title */}
         {editingTitle ? (
           <div className="flex items-start gap-3">
@@ -951,16 +951,16 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
               onChange={(val) => updateField("requestedBy", val || null)}
             />
           </div>
+        </div>
 
-          {/* Assignees */}
-          <div>
-            <label className="text-sm font-medium text-gray-600 mb-1 block">Assignees</label>
-            <AssigneeInput
-              taskId={task.id}
-              assignees={task.assignees || []}
-              onUpdate={onRefresh}
-            />
-          </div>
+        {/* Assignees — full width below the grid */}
+        <div>
+          <label className="text-sm font-medium text-gray-600 mb-1 block">Assignees</label>
+          <AssigneeInput
+            taskId={task.id}
+            assignees={task.assignees || []}
+            onUpdate={onRefresh}
+          />
         </div>
 
         {/* Created date */}
@@ -1224,6 +1224,15 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
           )}
         </div>
 
+        {/* Related Tasks */}
+        <RelatedTasksSection taskId={task.id} onSelectTask={onSelectTask} />
+
+        {/* Sprint History */}
+        <SprintHistorySection taskId={task.id} />
+
+        {/* GitHub Commits */}
+        <GitHubCommitsSection taskId={task.id} />
+
         {/* Comments */}
         <div>
           <label className="text-sm font-medium text-gray-600 mb-2 block">
@@ -1384,6 +1393,243 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Related Tasks section — search and link other tasks */
+function RelatedTasksSection({ taskId, onSelectTask }: { taskId: string; onSelectTask?: (taskId: string) => void }) {
+  const [links, setLinks] = useState<{ id: string; linkType: string; direction: string; task: { id: string; title: string; completed: boolean }; createdAt: string }[]>([]);
+  const [showSearch, setShowSearch] = useState(false);
+  const [query, setQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<{ id: string; title: string; completed: boolean }[]>([]);
+  const [linkType, setLinkType] = useState<"RELATED" | "PRECEDED_BY">("RELATED");
+  const [error, setError] = useState<string | null>(null);
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const loadLinks = useCallback(async () => {
+    try {
+      const data = await api.taskLinks.list(taskId);
+      setLinks(data as typeof links);
+    } catch { /* ignore */ }
+  }, [taskId]);
+
+  useEffect(() => { loadLinks(); }, [loadLinks]);
+
+  useEffect(() => {
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    if (!query.trim()) { setSearchResults([]); return; }
+    searchTimeoutRef.current = setTimeout(async () => {
+      try {
+        const results = await api.search(query.trim());
+        setSearchResults(
+          (results as { id: string; title: string; completed: boolean }[])
+            .filter((r) => r.id !== taskId)
+            .slice(0, 10)
+        );
+      } catch { setSearchResults([]); }
+    }, 300);
+    return () => { if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current); };
+  }, [query, taskId]);
+
+  const handleLink = async (targetId: string) => {
+    setError(null);
+    try {
+      await api.taskLinks.create(taskId, targetId, linkType);
+      await loadLinks();
+      setQuery("");
+      setSearchResults([]);
+      setShowSearch(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to create link");
+    }
+  };
+
+  const handleUnlink = async (linkId: string) => {
+    try {
+      await api.taskLinks.delete(taskId, linkId);
+      await loadLinks();
+    } catch { /* ignore */ }
+  };
+
+  if (links.length === 0 && !showSearch) {
+    return (
+      <div>
+        <button
+          onClick={() => setShowSearch(true)}
+          className="text-xs text-indigo-600 hover:text-indigo-800 transition-colors"
+        >
+          + Link related task
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <label className="text-sm font-medium text-gray-600 mb-2 block">
+        Related Tasks {links.length > 0 && `(${links.length})`}
+      </label>
+      {error && (
+        <p className="text-xs text-red-500 mb-2">{error}</p>
+      )}
+      {links.length > 0 && (
+        <div className="space-y-1 mb-2">
+          {links.map((link) => (
+            <div key={link.id} className="flex items-center gap-2 text-sm group">
+              <span className={`w-2 h-2 rounded-full flex-shrink-0 ${link.task.completed ? "bg-green-500" : "bg-gray-300"}`} />
+              <span className="text-[10px] text-gray-400 flex-shrink-0">
+                {link.linkType === "PRECEDED_BY"
+                  ? link.direction === "outgoing" ? "→ followed by" : "← follows"
+                  : "↔ related"}
+              </span>
+              <button
+                onClick={() => onSelectTask?.(link.task.id)}
+                className="text-left text-indigo-600 hover:text-indigo-800 hover:underline truncate flex-1 transition-colors cursor-pointer"
+              >
+                {link.task.title}
+              </button>
+              <button
+                onClick={() => handleUnlink(link.id)}
+                className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-500 transition-all p-0.5"
+                title="Remove link"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      {showSearch ? (
+        <div className="space-y-2">
+          <div className="flex gap-1">
+            <select
+              value={linkType}
+              onChange={(e) => setLinkType(e.target.value as "RELATED" | "PRECEDED_BY")}
+              className="text-xs border border-gray-200 rounded px-1 py-1 bg-white"
+            >
+              <option value="RELATED">Related</option>
+              <option value="PRECEDED_BY">Preceded by</option>
+            </select>
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search tasks to link…"
+              autoFocus
+              className="flex-1 px-2 py-1 text-sm border border-gray-200 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+            <button onClick={() => { setShowSearch(false); setQuery(""); setSearchResults([]); }} className="text-xs text-gray-400 hover:text-gray-600 px-1">
+              Cancel
+            </button>
+          </div>
+          {searchResults.length > 0 && (
+            <div className="border border-gray-200 rounded max-h-40 overflow-y-auto">
+              {searchResults.map((r) => (
+                <button
+                  key={r.id}
+                  onClick={() => handleLink(r.id)}
+                  className="w-full text-left px-3 py-1.5 text-sm hover:bg-indigo-50 transition-colors flex items-center gap-2"
+                >
+                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${r.completed ? "bg-green-500" : "border border-gray-300"}`} />
+                  <span className={`flex-1 truncate ${r.completed ? "text-gray-400" : "text-gray-700"}`}>{r.title}</span>
+                  <span className="text-[10px] text-indigo-500 flex-shrink-0">+ Link</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <button
+          onClick={() => setShowSearch(true)}
+          className="text-xs text-indigo-600 hover:text-indigo-800 transition-colors"
+        >
+          + Link another task
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Sprint History section — shows sprint movement timeline */
+function SprintHistorySection({ taskId }: { taskId: string }) {
+  const [history, setHistory] = useState<{ fromSprint: number | null; toSprint: number; movedAt: string }[]>([]);
+
+  useEffect(() => {
+    api.taskSprintHistory.list(taskId)
+      .then((data) => setHistory(data as typeof history))
+      .catch(() => {});
+  }, [taskId]);
+
+  if (history.length === 0) return null;
+
+  return (
+    <div>
+      <label className="text-sm font-medium text-gray-600 mb-2 block">Sprint History</label>
+      <div className="flex items-center gap-1 flex-wrap">
+        {history.map((h, i) => (
+          <div key={i} className="flex items-center gap-1">
+            {i === 0 && h.fromSprint !== null && (
+              <>
+                <span className="px-1.5 py-0.5 text-[10px] font-medium bg-indigo-100 text-indigo-700 rounded">
+                  S{h.fromSprint}
+                </span>
+                <svg className="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </>
+            )}
+            <span className="px-1.5 py-0.5 text-[10px] font-medium bg-indigo-100 text-indigo-700 rounded" title={`Moved ${new Date(h.movedAt).toLocaleDateString()}`}>
+              S{h.toSprint}
+            </span>
+            {i < history.length - 1 && (
+              <svg className="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** GitHub Commits section — shows commits linked from Trello custom fields */
+function GitHubCommitsSection({ taskId }: { taskId: string }) {
+  const [commits, setCommits] = useState<{ id: string; url: string; message: string; sha: string; createdAt: string }[]>([]);
+
+  useEffect(() => {
+    api.taskCommits.list(taskId)
+      .then((data) => setCommits(data as typeof commits))
+      .catch(() => {});
+  }, [taskId]);
+
+  if (commits.length === 0) return null;
+
+  return (
+    <div>
+      <label className="text-sm font-medium text-gray-600 mb-2 block">
+        GitHub Commits ({commits.length})
+      </label>
+      <div className="space-y-1">
+        {commits.map((c) => (
+          <a
+            key={c.id}
+            href={c.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 text-sm text-gray-700 hover:text-indigo-600 transition-colors group"
+          >
+            <svg className="w-3.5 h-3.5 text-gray-400 group-hover:text-indigo-500 flex-shrink-0" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
+            </svg>
+            <code className="text-xs font-mono text-gray-500 group-hover:text-indigo-500">{c.sha ? c.sha.slice(0, 7) : "commit"}</code>
+            <span className="truncate text-xs">{c.message || c.url.split("/").slice(-1)[0]}</span>
+          </a>
+        ))}
+      </div>
     </div>
   );
 }

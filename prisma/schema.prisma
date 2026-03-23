@@ -78,6 +78,10 @@ model Task {
   attachments Attachment[]
   sprintTasks SprintTask[]
   assignees   TaskAssignee[]
+  linksFrom   TaskLink[]   @relation("TaskLinkFrom")
+  linksTo     TaskLink[]   @relation("TaskLinkTo")
+  sprintHistory TaskSprintHistory[]
+  commits     TaskCommit[]
 
   @@index([sectionId])
   @@index([parentId])
@@ -208,4 +212,42 @@ model TeamMember {
   order     Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model TaskLink {
+  id        String   @id @default(cuid())
+  linkType  String   @default("RELATED") // RELATED, PRECEDED_BY
+  createdAt DateTime @default(now())
+  fromTaskId String
+  fromTask  Task     @relation("TaskLinkFrom", fields: [fromTaskId], references: [id], onDelete: Cascade)
+  toTaskId  String
+  toTask    Task     @relation("TaskLinkTo", fields: [toTaskId], references: [id], onDelete: Cascade)
+
+  @@unique([fromTaskId, toTaskId])
+  @@index([fromTaskId])
+  @@index([toTaskId])
+}
+
+model TaskSprintHistory {
+  id           String   @id @default(cuid())
+  movedAt      DateTime @default(now())
+  taskId       String
+  task         Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  fromSprintId String?
+  toSprintId   String
+
+  @@index([taskId])
+}
+
+model TaskCommit {
+  id        String   @id @default(cuid())
+  url       String
+  message   String   @default("")
+  sha       String   @default("")
+  createdAt DateTime @default(now())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, url])
+  @@index([taskId])
 }

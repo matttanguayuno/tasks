@@ -31,3 +31,10 @@ body {
   margin-top: 0.125rem;
   margin-bottom: 0.125rem;
 }
+
+/* Prevent pasted/dropped images from pushing content below the viewport */
+[contenteditable] img,
+.rich-text-content img {
+  max-height: 60vh;
+  object-fit: contain;
+}

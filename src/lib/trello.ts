@@ -290,6 +290,19 @@ export async function syncAllCards(sprintId: string): Promise<void> {
   }
 }
 
+/** Create Trello cards only for sprint tasks that don't have one yet.
+ *  Unlike syncAllCards, this does NOT update existing cards, so
+ *  Trello-side changes (column moves, renames, etc.) are preserved. */
+export async function syncMissingCards(sprintId: string): Promise<void> {
+  await ensureBoardForSprint(sprintId);
+  const tasks = await prisma.sprintTask.findMany({ where: { sprintId } });
+  for (const st of tasks) {
+    if (!st.trelloCardId) {
+      await syncCard(st.id);
+    }
+  }
+}
+
 /** Archive/delete a Trello card when a task is removed from the board. */
 export async function archiveCard(trelloCardId: string): Promise<void> {
   if (!trelloCardId) return;
@@ -685,9 +698,9 @@ export async function pullChangesFromTrello(sprintId: string): Promise<TrelloPul
     if (st) matchedCards.push({ card, st });
   }
 
-  // Fetch comments, attachments, and checklists for all cards in parallel
+  // Fetch comments, attachments, checklists, and custom fields for all cards in parallel
   console.log(`[Trello Pull] Processing ${matchedCards.length} matched cards for sprint ${sprintId}`);
-  const [commentResults, attachmentResults, checklistResults] = await Promise.all([
+  const [commentResults, attachmentResults, checklistResults, customFieldResults] = await Promise.all([
     Promise.all(
       matchedCards.map(({ card }) =>
         trelloFetch(
@@ -706,6 +719,14 @@ export async function pullChangesFromTrello(sprintId: string): Promise<TrelloPul
       matchedCards.map(({ card }) =>
         trelloFetch(`/cards/${card.id}/checklists`) as Promise<
           Array<{ id: string; name: string; checkItems: Array<{ id: string; name: string; state: string }> }> | null
+        >
+      )
+    ),
+    // Fetch custom field values for GitHub commit tracking
+    Promise.all(
+      matchedCards.map(({ card }) =>
+        trelloFetch(`/cards/${card.id}/customFieldItems`) as Promise<
+          Array<{ id: string; idCustomField: string; value?: { text?: string } }> | null
         >
       )
     ),
@@ -980,6 +1001,50 @@ export async function pullChangesFromTrello(sprintId: string): Promise<TrelloPul
    } catch (err) {
      console.warn(`[Trello] Error processing card ${card.id} for task "${st.task.title}":`, err);
    }
+  }
+
+  // Pull GitHub commits from Trello custom fields
+  // First, find the "GitHub Commits" custom field definition on the board
+  const boardCustomFields = await trelloFetch(
+    `/boards/${sprint.trelloBoardId}/customFields`
+  ) as Array<{ id: string; name: string }> | null;
+
+  const githubField = boardCustomFields?.find(
+    (f) => f.name.toLowerCase().includes("github") || f.name.toLowerCase().includes("commit")
+  );
+
+  if (githubField) {
+    for (let i = 0; i < matchedCards.length; i++) {
+      const { st } = matchedCards[i];
+      const fieldItems = customFieldResults[i];
+      if (!fieldItems) continue;
+
+      const fieldValue = fieldItems.find((fi) => fi.idCustomField === githubField.id);
+      const text = fieldValue?.value?.text;
+      if (!text) continue;
+
+      // Parse commit URLs — one per line or comma-separated
+      const urls = text.split(/[\n,]+/).map((u: string) => u.trim()).filter((u: string) => u.startsWith("http"));
+
+      for (const url of urls) {
+        // Extract short SHA from GitHub commit URL (last 7 chars of the hash)
+        const shaMatch = url.match(/\/commit\/([a-f0-9]+)/i);
+        const sha = shaMatch ? shaMatch[1].slice(0, 7) : "";
+
+        const existing = await prisma.taskCommit.findUnique({
+          where: { taskId_url: { taskId: st.taskId, url } },
+        });
+        if (!existing) {
+          await prisma.taskCommit.create({
+            data: {
+              taskId: st.taskId,
+              url,
+              sha,
+            },
+          });
+        }
+      }
+    }
   }
 
   // Import unmatched open cards — cards on the Trello board that have no

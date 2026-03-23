@@ -164,10 +164,15 @@ function findCurrentSprint(sprints: Sprint[]): Sprint | undefined {
     (s) => s.status === "ACTIVE" && new Date(s.startDate) <= now && new Date(s.endDate) >= now
   );
   if (active) return active;
-  // If no current sprint, pick the latest active one
+  // If no sprint covers today, pick the nearest upcoming active sprint
   const activeSprints = sprints.filter((s) => s.status === "ACTIVE");
   if (activeSprints.length > 0) {
-    return activeSprints.sort((a, b) => b.number - a.number)[0];
+    const upcoming = activeSprints
+      .filter((s) => new Date(s.startDate) > now)
+      .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
+    if (upcoming.length > 0) return upcoming[0];
+    // All active sprints are in the past — pick the most recent one
+    return activeSprints.sort((a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime())[0];
   }
   // Fall back to latest sprint overall
   return sprints.sort((a, b) => b.number - a.number)[0];

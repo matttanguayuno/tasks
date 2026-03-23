@@ -75,6 +75,15 @@ export async function POST(
           },
         });
       }
+
+      // Record sprint movement history
+      await prisma.taskSprintHistory.create({
+        data: {
+          taskId: st.taskId,
+          fromSprintId: sprintId,
+          toSprintId: nextSprint.id,
+        },
+      });
     }
   }
 

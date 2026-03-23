@@ -130,3 +130,39 @@ export interface SprintTask {
 export interface SprintWithTasks extends Sprint {
   sprintTasks: SprintTask[];
 }
+
+export interface TaskLinkInfo {
+  id: string;
+  linkType: string;
+  direction: "outgoing" | "incoming";
+  task: { id: string; title: string; completed: boolean; parentId: string | null };
+  createdAt: string;
+}
+
+export interface TaskSprintHistoryEntry {
+  fromSprint: number | null;
+  toSprint: number;
+  movedAt: string;
+}
+
+export interface TaskCommitInfo {
+  id: string;
+  url: string;
+  message: string | null;
+  sha: string | null;
+  createdAt: string;
+}
+
+export interface LineageNode {
+  id: string;
+  taskId: string;
+  title: string;
+  completed: boolean;
+  inProgress: boolean;
+  relation: "self" | "parent" | "subtask" | "linked" | "preceded_by" | "preceded";
+  linkType?: string;
+  sprintNumbers: number[];
+  sprintHistory: TaskSprintHistoryEntry[];
+  commitCount: number;
+  children: LineageNode[];
+}
