@@ -12,6 +12,7 @@ import { api } from "@/lib/api";
 import { useUndoRedo } from "@/hooks/useUndoRedo";
 import type { ProjectSummary, ProjectWithSections, Sprint, TaskWithRelations } from "@/lib/types";
 import { TaskDetail } from "@/components/TaskDetail";
+import UserManagement from "@/components/UserManagement";
 
 export default function Home() {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
@@ -32,6 +33,23 @@ export default function Home() {
   const [boardRefreshKey, setBoardRefreshKey] = useState(0);
   const [boardPanelCollapsed, setBoardPanelCollapsed] = useState(false);
   const [boardSidePanelHidden, setBoardSidePanelHidden] = useState(false);
+  const [currentUser, setCurrentUser] = useState<{ id: string; username: string; role: string; projectId: string | null } | null>(null);
+  const [showUserMgmt, setShowUserMgmt] = useState(false);
+
+  const isViewer = currentUser?.role === "VIEWER";
+
+  // Load current user on mount
+  useEffect(() => {
+    api.auth.me().then((res) => {
+      setCurrentUser(res.user);
+      // Auto-select the viewer's scoped project
+      if (res.user?.role === "VIEWER" && res.user.projectId) {
+        setActiveProjectId(res.user.projectId);
+      }
+    }).catch(() => {
+      window.location.href = "/login";
+    });
+  }, []);
 
   const loadProjects = useCallback(async () => {
     const data = await api.projects.list();
@@ -212,9 +230,16 @@ export default function Home() {
         }}
         onProjectsChange={loadProjects}
         onReorderProjects={setProjects}
-        onGoHome={() => { setActiveProjectId(null); setSearchQuery(""); }}
+        onGoHome={isViewer ? undefined : () => { setActiveProjectId(null); setSearchQuery(""); }}
         isOpen={sidebarOpen}
         onToggle={() => setSidebarOpen(!sidebarOpen)}
+        readOnly={isViewer}
+        currentUser={currentUser}
+        onShowUserMgmt={() => setShowUserMgmt(true)}
+        onLogout={async () => {
+          await api.auth.logout();
+          window.location.href = "/login";
+        }}
       />
 
       <main className="flex-1 overflow-hidden flex flex-col">
@@ -233,6 +258,8 @@ export default function Home() {
               <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: activeProject.color }} />
               <h1 className="font-semibold text-gray-900">{activeProject.name}</h1>
               <div className="flex items-center gap-0.5 ml-1">
+                {!isViewer && (
+                <>
                 <button
                   onClick={undo}
                   disabled={!canUndo}
@@ -253,6 +280,8 @@ export default function Home() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 10l-5-5M21 10l-5 5M21 10H8a5 5 0 000 10h3" />
                   </svg>
                 </button>
+                </>
+                )}
 
                 <div className="w-px h-4 bg-gray-400/50 mx-1.5" />
 
@@ -327,7 +356,7 @@ export default function Home() {
                 >
                   ▦ Sprints
                 </button>
-              ) : (
+              ) : !isViewer ? (
                 <button
                   onClick={async () => {
                     if (activeProjectId) {
@@ -342,7 +371,7 @@ export default function Home() {
                 >
                   + Add Sprint
                 </button>
-              )}
+              ) : null}
               <button
                 onClick={() => setViewMode("lineage")}
                 className={`px-2 py-1 rounded text-xs font-medium transition-colors ${viewMode === "lineage" ? "bg-gray-300 text-gray-700" : "text-gray-500 hover:bg-gray-300"}`}
@@ -368,6 +397,7 @@ export default function Home() {
               />
             </div>
           </div>
+
         </header>
 
         <div className="flex-1 overflow-auto">
@@ -405,6 +435,7 @@ export default function Home() {
                   selectedTaskId={boardSelectedTaskId}
                   onRefresh={refreshProject}
                   refreshKey={boardRefreshKey}
+                  readOnly={isViewer}
                 />
               </div>
               {boardSelectedTask && !boardPanelCollapsed ? (
@@ -427,6 +458,7 @@ export default function Home() {
                     }}
                     storageKey="boardDetailPanelWidth"
                     defaultWidth="md:w-[380px] lg:w-[420px] xl:w-[480px]"
+                    readOnly={isViewer}
                   />
                 </div>
               ) : boardSelectedTask && boardPanelCollapsed ? (
@@ -474,6 +506,7 @@ export default function Home() {
                     setBoardSelectedTask(null);
                     setBoardPanelCollapsed(true);
                   }}
+                  readOnly={isViewer}
                 />
               </div>
               {boardSelectedTask && !boardPanelCollapsed && (
@@ -495,15 +528,17 @@ export default function Home() {
                     }}
                     storageKey="lineageDetailPanelWidth"
                     defaultWidth="md:w-[380px] lg:w-[420px] xl:w-[480px]"
+                    readOnly={isViewer}
                   />
                 </div>
               )}
             </div>
           ) : (
-            <ProjectView project={activeProject} onRefresh={refreshProject} pushAction={pushAction} initialTaskId={pendingTaskId} onInitialTaskConsumed={() => setPendingTaskId(null)} collapseAllRef={collapseAllRef} filterHighPriority={filterHighPriority} hideCompleted={hideCompleted} />
+            <ProjectView project={activeProject} onRefresh={refreshProject} pushAction={pushAction} initialTaskId={pendingTaskId} onInitialTaskConsumed={() => setPendingTaskId(null)} collapseAllRef={collapseAllRef} filterHighPriority={filterHighPriority} hideCompleted={hideCompleted} readOnly={isViewer} />
           )}
         </div>
       </main>
+      {showUserMgmt && <UserManagement onClose={() => setShowUserMgmt(false)} projects={projects} />}
     </div>
   );
 }

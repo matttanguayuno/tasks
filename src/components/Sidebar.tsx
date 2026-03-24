@@ -31,9 +31,13 @@ interface SidebarProps {
   onSelectProject: (id: string) => void;
   onProjectsChange: () => void;
   onReorderProjects: (reordered: ProjectSummary[]) => void;
-  onGoHome: () => void;
+  onGoHome?: () => void;
   isOpen: boolean;
   onToggle: () => void;
+  readOnly?: boolean;
+  currentUser?: { id: string; username: string; role: string; projectId: string | null } | null;
+  onShowUserMgmt?: () => void;
+  onLogout?: () => void;
 }
 
 /* ──────────────────────── Delete‑confirm modal ──────────────────────── */
@@ -313,6 +317,76 @@ function SortableProjectItem({
   );
 }
 
+/* ──────────────────────── Settings menu ──────────────────────── */
+
+function SettingsMenu({
+  currentUser,
+  onShowUserMgmt,
+  onLogout,
+}: {
+  currentUser: { id: string; username: string; role: string; projectId: string | null };
+  onShowUserMgmt?: () => void;
+  onLogout?: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  return (
+    <div className="relative" ref={menuRef}>
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 hover:bg-gray-300 rounded-lg transition-colors w-full"
+      >
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+        </svg>
+        Settings
+      </button>
+
+      {open && (
+        <div className="absolute bottom-full left-0 mb-1 w-56 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50">
+          <div className="px-3 py-2 text-xs text-gray-400 border-b border-gray-100">
+            Signed in as <span className="font-medium text-gray-600">{currentUser.username}</span>
+            {currentUser.role === "VIEWER" && <span className="ml-1 text-gray-400">(view only)</span>}
+          </div>
+          {currentUser.role === "ADMIN" && onShowUserMgmt && (
+            <button
+              onClick={() => { setOpen(false); onShowUserMgmt(); }}
+              className="flex items-center gap-2 w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197" />
+              </svg>
+              Manage users
+            </button>
+          )}
+          {onLogout && (
+            <button
+              onClick={() => { setOpen(false); onLogout(); }}
+              className="flex items-center gap-2 w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
+              Log out
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ──────────────────────── Sidebar ──────────────────────── */
 
 export function Sidebar({
@@ -324,6 +398,10 @@ export function Sidebar({
   onGoHome,
   isOpen,
   onToggle,
+  readOnly,
+  currentUser,
+  onShowUserMgmt,
+  onLogout,
 }: SidebarProps) {
   const [showNewProject, setShowNewProject] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
@@ -496,14 +574,19 @@ export function Sidebar({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
             </svg>
           </button>
-          <button onClick={onGoHome} className="font-bold text-lg text-gray-900 hover:text-indigo-600 transition-colors">
-            Tasks
-          </button>
+          {onGoHome ? (
+            <button onClick={onGoHome} className="font-bold text-lg text-gray-900 hover:text-indigo-600 transition-colors">
+              Tasks
+            </button>
+          ) : (
+            <span className="font-bold text-lg text-gray-900">Tasks</span>
+          )}
         </div>
 
         <nav className="flex-1 overflow-auto py-3">
           <div className="px-4 mb-2 flex items-center justify-between">
             <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Projects</span>
+            {!readOnly && (
             <button
               onClick={() => setShowNewProject(true)}
               className="p-1 hover:bg-gray-300 rounded text-gray-500 hover:text-gray-700"
@@ -513,6 +596,7 @@ export function Sidebar({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
               </svg>
             </button>
+            )}
           </div>
 
           {showNewProject && (
@@ -574,16 +658,16 @@ export function Sidebar({
                       onSelectProject(project.id);
                       if (window.innerWidth < 1024) onToggle();
                     }}
-                    onStartRename={() => setRenamingProjectId(project.id)}
+                    onStartRename={() => !readOnly && setRenamingProjectId(project.id)}
                     onRename={async (name) => {
                       setRenamingProjectId(null);
-                      if (name !== project.name) {
+                      if (!readOnly && name !== project.name) {
                         await api.projects.update(project.id, { name });
                         onProjectsChange();
                       }
                     }}
                     onContextMenu={(e) => {
-                      setContextMenu({ x: e.clientX, y: e.clientY, projectId: project.id });
+                      if (!readOnly) setContextMenu({ x: e.clientX, y: e.clientY, projectId: project.id });
                     }}
                   />
                 ))}
@@ -621,7 +705,7 @@ export function Sidebar({
                         }}
                         onContextMenu={(e) => {
                           e.preventDefault();
-                          setContextMenu({ x: e.clientX, y: e.clientY, projectId: project.id });
+                          if (!readOnly) setContextMenu({ x: e.clientX, y: e.clientY, projectId: project.id });
                         }}
                         className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors text-left cursor-pointer ${
                           activeProjectId === project.id
@@ -644,6 +728,9 @@ export function Sidebar({
         </nav>
 
         <div className="border-t border-gray-200 p-3 space-y-1">
+          {currentUser && <SettingsMenu currentUser={currentUser} onShowUserMgmt={onShowUserMgmt} onLogout={onLogout} />}
+          {!readOnly && (
+          <>
           <a
             href="/api/backup"
             download
@@ -688,6 +775,8 @@ export function Sidebar({
               }}
             />
           </label>
+          </>
+          )}
         </div>
       </aside>
 

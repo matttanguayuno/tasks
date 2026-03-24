@@ -352,4 +352,32 @@ export const api = {
     list: (taskId: string) =>
       fetchJson<unknown[]>(`${API_BASE}/tasks/${taskId}/sprint-history`),
   },
+
+  auth: {
+    me: () => fetchJson<{ user: { id: string; username: string; role: string; projectId: string | null } | null }>(`${API_BASE}/auth`),
+    login: (username: string, password: string) =>
+      fetchJson<{ user: unknown }>(`${API_BASE}/auth`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      }),
+    logout: () => fetchJson<unknown>(`${API_BASE}/auth`, { method: "DELETE" }),
+    users: {
+      list: () => fetchJson<unknown[]>(`${API_BASE}/auth/users`),
+      create: (data: { username: string; password: string; role?: string; projectId?: string }) =>
+        fetchJson<unknown>(`${API_BASE}/auth/users`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data),
+        }),
+      update: (userId: string, data: Record<string, unknown>) =>
+        fetchJson<unknown>(`${API_BASE}/auth/users/${userId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data),
+        }),
+      delete: (userId: string) =>
+        fetchJson<unknown>(`${API_BASE}/auth/users/${userId}`, { method: "DELETE" }),
+    },
+  },
 };

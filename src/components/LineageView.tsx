@@ -9,6 +9,7 @@ interface LineageViewProps {
   selectedTaskId?: string | null;
   onSelectTask?: (taskId: string) => void;
   onDeselectTask?: () => void;
+  readOnly?: boolean;
 }
 
 const LINK_TYPE_COLORS: Record<string, string> = {
@@ -168,7 +169,7 @@ function autoSortAllSprints(
   return result;
 }
 
-export default function LineageView({ projectId, selectedTaskId, onSelectTask, onDeselectTask }: LineageViewProps) {
+export default function LineageView({ projectId, selectedTaskId, onSelectTask, onDeselectTask, readOnly }: LineageViewProps) {
   const [sprints, setSprints] = useState<Sprint[]>([]);
   const [sprintData, setSprintData] = useState<Map<string, SprintWithTasks>>(new Map());
   const [loading, setLoading] = useState(true);
@@ -750,6 +751,7 @@ export default function LineageView({ projectId, selectedTaskId, onSelectTask, o
                     hasLinks={allLinks.some((l) => l.fromTaskId === st.taskId || l.toTaskId === st.taskId)}
                     linkCount={allLinks.filter((l) => l.fromTaskId === st.taskId || l.toTaskId === st.taskId).length}
                     hasParent={siblingPairs.some((p) => p.childTaskId === st.taskId)}
+                    readOnly={readOnly}
                   />
                 ))}
                 {tasks.length === 0 && (
@@ -822,8 +824,9 @@ const TaskCard = React.forwardRef<
     hasLinks: boolean;
     linkCount: number;
     hasParent: boolean;
+    readOnly?: boolean;
   }
->(function TaskCard({ sprintTask, isDragFrom, isDragTo, isSelected, isDragging, onDragStart, onReorderDragStart, onClick, hasLinks, linkCount, hasParent }, ref) {
+>(function TaskCard({ sprintTask, isDragFrom, isDragTo, isSelected, isDragging, onDragStart, onReorderDragStart, onClick, hasLinks, linkCount, hasParent, readOnly }, ref) {
   const task = sprintTask.task;
 
   return (
@@ -842,6 +845,7 @@ const TaskCard = React.forwardRef<
       `}
     >
       {/* Drag handle — left edge (link) */}
+      {!readOnly && (
       <div
         onMouseDown={onDragStart}
         className="absolute -left-2.5 top-1/2 -translate-y-1/2 w-5 h-8 flex items-center justify-center cursor-crosshair opacity-0 group-hover:opacity-100 transition-opacity"
@@ -850,8 +854,10 @@ const TaskCard = React.forwardRef<
       >
         <div className="w-2.5 h-2.5 rounded-full bg-indigo-400 ring-2 ring-white shadow-sm" />
       </div>
+      )}
 
       {/* Drag handle — right edge (link) */}
+      {!readOnly && (
       <div
         onMouseDown={onDragStart}
         className="absolute -right-2.5 top-1/2 -translate-y-1/2 w-5 h-8 flex items-center justify-center cursor-crosshair opacity-0 group-hover:opacity-100 transition-opacity"
@@ -860,8 +866,10 @@ const TaskCard = React.forwardRef<
       >
         <div className="w-2.5 h-2.5 rounded-full bg-indigo-400 ring-2 ring-white shadow-sm" />
       </div>
+      )}
 
       {/* Reorder drag handle — grip dots */}
+      {!readOnly && (
       <div
         onMouseDown={onReorderDragStart}
         className="flex-shrink-0 cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity text-gray-400"
@@ -873,6 +881,7 @@ const TaskCard = React.forwardRef<
           <circle cx="1" cy="9" r="1" /><circle cx="5" cy="9" r="1" />
         </svg>
       </div>
+      )}
 
       {/* Parent-child indicator */}
       {hasParent && (

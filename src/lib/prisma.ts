@@ -3,7 +3,7 @@ import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient; _prismaVersion?: number };
 
-const SCHEMA_VERSION = 10; // bump after schema changes to force re-creation
+const SCHEMA_VERSION = 11; // bump after schema changes to force re-creation
 
 if (globalForPrisma._prismaVersion !== SCHEMA_VERSION) {
   globalForPrisma.prisma = undefined!;

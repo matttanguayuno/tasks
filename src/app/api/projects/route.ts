@@ -1,11 +1,21 @@
 import { prisma } from "@/lib/prisma";
+import { getCurrentUser } from "@/lib/auth";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const includeArchived = searchParams.get("archived") === "true";
+
+  const user = await getCurrentUser();
+  const where: Record<string, unknown> = includeArchived ? { archived: true } : { archived: false };
+
+  // Scope viewers to their assigned project
+  if (user?.role === "VIEWER" && user.projectId) {
+    where.id = user.projectId;
+  }
+
   const projects = await prisma.project.findMany({
-    where: includeArchived ? { archived: true } : { archived: false },
+    where,
     orderBy: { order: "asc" },
     include: { _count: { select: { sections: true } } },
   });

@@ -29,6 +29,7 @@ interface TaskDetailProps {
   pushAction?: (action: UndoAction) => void;
   storageKey?: string;
   defaultWidth?: string;
+  readOnly?: boolean;
 }
 
 function RequesterInput({ value, onChange }: { value: string; onChange: (val: string) => void }) {
@@ -241,7 +242,7 @@ function SprintSelector({ taskId, projectId, onUpdate }: { taskId: string; proje
   );
 }
 
-export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSelectTask, pushAction, storageKey = "detailPanelWidth", defaultWidth = "md:w-[450px] lg:w-[550px] xl:w-[650px]" }: TaskDetailProps) {
+export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSelectTask, pushAction, storageKey = "detailPanelWidth", defaultWidth = "md:w-[450px] lg:w-[550px] xl:w-[650px]", readOnly }: TaskDetailProps) {
   const subtaskSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
   const [title, setTitle] = useState(task.title);
   const [editingTitle, setEditingTitle] = useState(false);
@@ -418,6 +419,7 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
   };
 
   const updateField = async (field: string, value: unknown) => {
+    if (readOnly) return;
     const taskId = task.id;
     const oldValue = (task as unknown as Record<string, unknown>)[field];
     await api.tasks.update(taskId, { [field]: value });
@@ -509,7 +511,7 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
 
 
   const handleAddSubtask = async () => {
-    if (!newSubtaskTitle.trim()) return;
+    if (readOnly || !newSubtaskTitle.trim()) return;
     await api.subtasks.create(task.id, { title: newSubtaskTitle.trim() });
     setNewSubtaskTitle("");
     onRefresh();
@@ -530,11 +532,13 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
   };
 
   const handleToggleSubtask = async (subtaskId: string, completed: boolean) => {
+    if (readOnly) return;
     await api.subtasks.update(task.id, subtaskId, { completed: !completed });
     onRefresh();
   };
 
   const handleDeleteSubtask = async (subtaskId: string) => {
+    if (readOnly) return;
     await api.subtasks.delete(task.id, subtaskId);
     onRefresh();
   };
@@ -542,6 +546,7 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
 
 
   const handleAddComment = async (content?: string) => {
+    if (readOnly) return;
     const text = content ?? newComment;
     if (!text.trim()) return;
     await api.comments.create(task.id, { content: text.trim() });
@@ -551,6 +556,7 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
   };
 
   const handleDeleteComment = async (commentId: string) => {
+    if (readOnly) return;
     await api.comments.delete(task.id, commentId);
     onRefresh();
   };
@@ -695,7 +701,7 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
           </button>
         )}
         <div className="flex-1" />
-        {onDelete && (
+        {onDelete && !readOnly && (
           <button
             onClick={() => {
               const hasSubtasks = task.subtasks && task.subtasks.length > 0;
@@ -728,7 +734,7 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
       {/* Content */}
       <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-4 py-4 space-y-6">
         {/* Title */}
-        {editingTitle ? (
+        {editingTitle && !readOnly ? (
           <div className="flex items-start gap-3">
             <button
               onClick={async () => {
@@ -784,6 +790,7 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
         ) : (
           <div
             onClick={async (e) => {
+              if (readOnly) return;
               if (!(e.target as HTMLElement).closest('a') && !(e.target as HTMLElement).closest('button')) {
                 if (task.hyperlink) {
                   // Auto-convert task.hyperlink to inline markdown link
@@ -821,6 +828,7 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
             <button
               onClick={async (e) => {
                 e.stopPropagation();
+                if (readOnly) return;
                 await api.tasks.update(task.id, { completed: !task.completed });
                 onRefresh();
               }}
@@ -939,7 +947,8 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
               type="date"
               value={task.dueDate ? new Date(task.dueDate).toISOString().split("T")[0] : ""}
               onChange={(e) => updateField("dueDate", e.target.value || null)}
-              className="w-full px-2 py-1 text-sm border border-gray-200 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              disabled={readOnly}
+              className="w-full px-2 py-1 text-sm border border-gray-200 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
             />
           </div>
 
@@ -989,6 +998,7 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
               setDragging(false);
               return await uploadImageAndGetUrl(file);
             }}
+            readOnly={readOnly}
           />
         </div>
 
@@ -1032,6 +1042,7 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
             </SortableContext>
           </DndContext>
 
+          {!readOnly && (
           <div className="flex gap-2 mt-2">
             <input
               type="text"
@@ -1050,6 +1061,7 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
               Add
             </button>
           </div>
+          )}
         </div>
 
         {/* Attachments */}
@@ -1120,7 +1132,7 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
                     {att.filename}
                   </a>
                   {!isLink && <span className="text-xs text-gray-400">{formatFileSize(att.size)}</span>}
-                  {isLink && (
+                  {!readOnly && isLink && (
                     <button
                       onClick={() => { setEditingAttachment(att.id); setEditAttName(att.filename); setEditAttUrl(att.url); }}
                       className="p-0.5 opacity-0 group-hover:opacity-100 hover:text-indigo-500 text-gray-400"
@@ -1131,6 +1143,7 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
                       </svg>
                     </button>
                   )}
+                  {!readOnly && (
                   <button
                     onClick={() => setConfirmDelete(att.id)}
                     className="p-0.5 opacity-0 group-hover:opacity-100 hover:text-red-500 text-gray-400"
@@ -1139,11 +1152,14 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                     </svg>
                   </button>
+                  )}
                 </div>
                 );
               })}
             </div>
           )}
+          {!readOnly && (
+          <>
           <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
           <div className="flex items-center gap-3">
             <button
@@ -1222,6 +1238,8 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
               </div>
             </div>
           )}
+          </>
+          )}
         </div>
 
         {/* Related Tasks */}
@@ -1251,6 +1269,8 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
                     )}
                   </span>
                   <div className="flex items-center gap-1">
+                    {!readOnly && (
+                    <>
                     <button
                       onClick={() => {
                         setEditingCommentId(comment.id);
@@ -1271,6 +1291,8 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                       </svg>
                     </button>
+                    </>
+                    )}
                   </div>
                 </div>
                 {editingCommentId === comment.id ? (
@@ -1311,6 +1333,7 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
               </div>
             ))}
           </div>
+          {!readOnly && (
           <div className="flex gap-2">
             <RichCommentInput
               ref={commentEditorRef}
@@ -1330,6 +1353,7 @@ export function TaskDetail({ task, projectId, onClose, onRefresh, onDelete, onSe
               Post
             </button>
           </div>
+          )}
         </div>
       </div>
       {/* Hyperlink dialog */}
@@ -2138,11 +2162,13 @@ export function RichDescriptionEditor({
   onSave,
   uploadImage,
   taskId,
+  readOnly,
 }: {
   value: string;
   onSave: (val: string) => void;
   uploadImage: (file: File) => Promise<string | null>;
   taskId: string;
+  readOnly?: boolean;
 }) {
   const editorRef = useRef<HTMLDivElement>(null);
   const internalValue = useRef(value);
@@ -2228,7 +2254,7 @@ export function RichDescriptionEditor({
       )}
       <div
         ref={editorRef}
-        contentEditable
+        contentEditable={!readOnly}
         suppressContentEditableWarning
         onInput={handleInput}
         onBlur={handleBlur}

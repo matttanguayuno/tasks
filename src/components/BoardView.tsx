@@ -44,6 +44,7 @@ interface BoardViewProps {
   selectedTaskId: string | null;
   onRefresh: () => void;
   refreshKey?: number;
+  readOnly?: boolean;
 }
 
 function DraggableTaskItem({ task, depth = 0 }: { task: TaskWithRelations; depth?: number }) {
@@ -189,6 +190,7 @@ export default function BoardView({
   selectedTaskId,
   onRefresh,
   refreshKey,
+  readOnly,
 }: BoardViewProps) {
   const [sprints, setSprints] = useState<Sprint[]>([]);
   const [currentSprint, setCurrentSprint] = useState<SprintWithTasks | null>(null);
@@ -580,12 +582,14 @@ export default function BoardView({
     return (
       <div className="flex flex-col items-center justify-center h-64 gap-4">
         <p className="text-gray-400">No sprints yet for {projectName}</p>
+        {!readOnly && (
         <button
           onClick={handleCreateSprint}
           className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500"
         >
           + Create First Sprint
         </button>
+        )}
       </div>
     );
   }
@@ -624,6 +628,8 @@ export default function BoardView({
         <div className="flex-1" />
 
         {/* Sprint actions */}
+        {!readOnly && (
+        <>
         <button
           onClick={() => setShowTaskPanel((v) => !v)}
           className={`text-xs px-2 py-1 rounded hover:bg-white/20 ${
@@ -659,6 +665,8 @@ export default function BoardView({
         >
           ⚙ Settings
         </button>
+        </>
+        )}
 
         {trelloConfigured && currentSprint?.trelloBoardId && (
           <span className={`text-xs px-2 py-1 ${trelloAuthError ? "text-red-400" : "text-green-400"}`} title={trelloAuthError ? "Trello token expired" : "Syncing to Trello (manage in Settings)"}>
@@ -678,7 +686,7 @@ export default function BoardView({
 
       {/* Board */}
       <DndContext
-        sensors={sensors}
+        sensors={readOnly ? [] : sensors}
         collisionDetection={collisionDetection}
         onDragStart={handleDragStart}
         onDragOver={handleDragOver}

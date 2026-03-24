@@ -129,9 +129,10 @@ interface ProjectViewProps {
   collapseAllRef?: React.MutableRefObject<(() => void) | null>;
   filterHighPriority?: boolean;
   hideCompleted?: boolean;
+  readOnly?: boolean;
 }
 
-export function ProjectView({ project, onRefresh, pushAction, initialTaskId, onInitialTaskConsumed, collapseAllRef, filterHighPriority, hideCompleted }: ProjectViewProps) {
+export function ProjectView({ project, onRefresh, pushAction, initialTaskId, onInitialTaskConsumed, collapseAllRef, filterHighPriority, hideCompleted, readOnly }: ProjectViewProps) {
   const [selectedTask, setSelectedTask] = useState<TaskWithRelations | null>(null);
   const [panelCollapsed, setPanelCollapsed] = useState(false);
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
@@ -1898,6 +1899,7 @@ export function ProjectView({ project, onRefresh, pushAction, initialTaskId, onI
                     onToggleComplete={() => handleToggleComplete(task)}
                     onDelete={() => handleDeleteTask(task.id)}
                     onContextMenu={(e) => {
+                      if (readOnly) return;
                       if ((e.target as HTMLElement).closest('a')) return;
                       setContextMenu({ x: e.clientX, y: e.clientY, task });
                     }}
@@ -2036,7 +2038,7 @@ export function ProjectView({ project, onRefresh, pushAction, initialTaskId, onI
                       Cancel
                     </button>
                   </div>
-                ) : (
+                ) : !readOnly ? (
                   <button
                     onClick={() => setAddingTaskInSection(section.id)}
                     className="flex items-center gap-2 py-1.5 pl-[36px] pr-2 text-sm text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded w-full transition-colors cursor-pointer"
@@ -2046,7 +2048,7 @@ export function ProjectView({ project, onRefresh, pushAction, initialTaskId, onI
                     </svg>
                     Task
                   </button>
-                )}
+                ) : null}
               </DroppableSection>              </SortableContext>
               );
             })()}
@@ -2091,7 +2093,7 @@ export function ProjectView({ project, onRefresh, pushAction, initialTaskId, onI
               </button>
             </div>
           </div>
-        ) : (
+        ) : !readOnly ? (
           <button
             onClick={() => setAddingSection(true)}
             className="mt-4 flex items-center gap-2 text-sm text-gray-400 hover:text-gray-600 transition-colors"
@@ -2101,7 +2103,7 @@ export function ProjectView({ project, onRefresh, pushAction, initialTaskId, onI
             </svg>
             Section
           </button>
-        )}
+        ) : null}
 
         <DragOverlay dropAnimation={null}>
           {activeTask ? (
@@ -2203,6 +2205,7 @@ export function ProjectView({ project, onRefresh, pushAction, initialTaskId, onI
               setSelectedTask(full as TaskWithRelations);
             }
           }}
+          readOnly={readOnly}
         />
       )}
       {/* Section detail panel */}
